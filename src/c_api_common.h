@@ -41,6 +41,9 @@ typedef void* CommunicatorHandle;
 // KVstore message handler type
 typedef void* KVMsgHandle;
 
+// Distributed sampling message handler type
+typedef void* DSMsgHandle;
+
 /*! \brief Enum type for bool value with unknown */
 enum BoolFlag {
   kBoolUnknown = -1,

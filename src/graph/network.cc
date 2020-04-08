@@ -606,5 +606,237 @@ DGL_REGISTER_GLOBAL("network._CAPI_DeleteKVMsg")
     delete msg;
   });
 
+
+////////////////////////// Distributed Sampler Components ////////////////////////////////
+char* DistSampleMsg::Serialize(int64_t* size) {
+  char* buffer = nullptr;
+  int64_t buffer_size = 0;
+  buffer_size += sizeof(this->msg_type);
+  buffer_size += sizeof(this->rank);
+  if (!this->name.empty()) {
+    buffer_size += sizeof(this->name.size());
+    buffer_size += this->name.size();
+  }
+  // In the future, we should have a better memory management as
+  // allocating a large chunk of memory can be very expensive.
+  buffer = new char[buffer_size];
+  char* pointer = buffer;
+  // write msg_type
+  *(reinterpret_cast<int*>(pointer)) = this->msg_type;
+  pointer += sizeof(this->msg_type);
+  // write rank
+  *(reinterpret_cast<int*>(pointer)) = this->rank;
+  pointer += sizeof(this->rank);
+  // write fanout
+  *(reinterpret_cast<int*>(pointer)) = this->fanout;
+  pointer += sizeof(this->fanout);
+  // write name
+  if (!this->name.empty()) {
+    *(reinterpret_cast<size_t*>(pointer)) = this->name.size();
+    pointer += sizeof(size_t);
+    memcpy(pointer, this->name.c_str(), this->name.size());
+  }
+
+  *size = buffer_size;
+  return buffer;
+}
+
+void DistSampleMsg::Deserialize(char* buffer, int64_t size) {
+  int64_t data_size = 0;
+  // Read msg_type
+  this->msg_type = *(reinterpret_cast<int*>(buffer));
+  buffer += sizeof(int);
+  data_size += sizeof(int);
+  // Read rank
+  this->rank = *(reinterpret_cast<int*>(buffer));
+  buffer += sizeof(int);
+  data_size += sizeof(int);
+
+  this->fanout = *(reinterpret_cast<int*>(buffer));
+  buffer += sizeof(int);
+  data_size += sizeof(int);
+  
+  if (data_size < size) {
+    // Read name
+    size_t name_size = *(reinterpret_cast<size_t*>(buffer));
+    buffer += sizeof(name_size);
+    data_size += sizeof(name_size);
+    this->name.assign(buffer, name_size);
+    data_size += name_size;
+  }
+  CHECK_EQ(data_size, size);
+}
+
+
+DGL_REGISTER_GLOBAL("network._CAPI_SenderSendDSMsg")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    int args_count = 0;
+    CommunicatorHandle chandle = args[args_count++];
+    int recv_id = args[args_count++];
+    DistSampleMsg ds_msg;
+    ds_msg.msg_type = args[args_count++];
+    ds_msg.rank = args[args_count++];
+    ds_msg.fanout = args[args_count++];
+
+    network::Sender* sender = static_cast<network::Sender*>(chandle);
+    if (ds_msg.msg_type != kFinalMsg && ds_msg.msg_type != kBarrierMsg) {
+      std::string name = args[args_count++];
+      ds_msg.name = name;
+      if (ds_msg.msg_type == kSampleRequest) {
+        ds_msg.seed = args[args_count++];
+      }
+      if (ds_msg.msg_type == kSampleResponse) {
+        ds_msg.result = args[args_count++];
+      }
+    }
+    int64_t ds_size = 0;
+    char* ds_data = ds_msg.Serialize(&ds_size);
+    // Send kv_data
+    Message send_ds_msg;
+    send_ds_msg.data = ds_data;
+    send_ds_msg.size = ds_size;
+    send_ds_msg.deallocator = DefaultMessageDeleter;
+    CHECK_EQ(sender->Send(send_ds_msg, recv_id), ADD_SUCCESS);
+
+    if (ds_msg.msg_type != kFinalMsg &&
+        ds_msg.msg_type != kBarrierMsg &&
+        ds_msg.msg_type != kIPIDMsg) {
+      // Send ArrayMeta
+      ArrayMeta meta(ds_msg.msg_type);
+      if (ds_msg.msg_type == kSampleRequest) {
+        meta.AddArray(ds_msg.seed);
+      }
+      if (ds_msg.msg_type == kSampleResponse) {
+        meta.AddArray(ds_msg.result);
+      }
+      int64_t meta_size = 0;
+      char* meta_data = meta.Serialize(&meta_size);
+      Message send_meta_msg;
+      send_meta_msg.data = meta_data;
+      send_meta_msg.size = meta_size;
+      send_meta_msg.deallocator = DefaultMessageDeleter;
+      CHECK_EQ(sender->Send(send_meta_msg, recv_id), ADD_SUCCESS);
+      // Send seed NDArray
+      if (ds_msg.msg_type == kSampleRequest) {
+        Message send_seed_msg;
+        send_seed_msg.data = static_cast<char*>(ds_msg.seed->data);
+        send_seed_msg.size = ds_msg.seed.GetSize();
+        NDArray data = ds_msg.seed;
+        send_seed_msg.deallocator = [data](Message*) {};
+        CHECK_EQ(sender->Send(send_seed_msg, recv_id), ADD_SUCCESS);
+      }
+      // Send result NDArray
+      if (ds_msg.msg_type == kSampleResponse) {
+        Message send_result_msg;
+        send_result_msg.data = static_cast<char*>(ds_msg.result->data);
+        send_result_msg.size = ds_msg.result.GetSize();
+        NDArray data = ds_msg.result;
+        send_result_msg.deallocator = [data](Message*) {};
+        CHECK_EQ(sender->Send(send_result_msg, recv_id), ADD_SUCCESS);
+      }
+    }
+  });
+
+DGL_REGISTER_GLOBAL("network.CAPI_ReceiverRecvDSMsg")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    CommunicatorHandle chandle = args[0];
+    network::Receiver* receiver = static_cast<network::SocketReceiver*>(chandle);
+    DistSampleMsg *ds_msg = new DistSampleMsg();
+    // Recv kv_Msg
+    Message recv_ds_msg;
+    int send_id;
+    CHECK_EQ(receiver->Recv(&recv_ds_msg, &send_id), REMOVE_SUCCESS);
+    ds_msg->Deserialize(recv_ds_msg.data, recv_ds_msg.size);
+    recv_ds_msg.deallocator(&recv_ds_msg);
+    if (ds_msg->msg_type == kFinalMsg ||
+        ds_msg->msg_type == kBarrierMsg ||
+        ds_msg->msg_type == kIPIDMsg) {
+      *rv = ds_msg;
+      return;
+    }
+    // Recv ArrayMeta
+    Message recv_meta_msg;
+    CHECK_EQ(receiver->RecvFrom(&recv_meta_msg, send_id), REMOVE_SUCCESS);
+    ArrayMeta meta(recv_meta_msg.data, recv_meta_msg.size);
+    recv_meta_msg.deallocator(&recv_meta_msg);
+    // Recv seed NDArray
+    if (ds_msg->msg_type == kSampleRequest) {
+      Message recv_seed_msg;
+      CHECK_EQ(receiver->RecvFrom(&recv_seed_msg, send_id), REMOVE_SUCCESS);
+      CHECK_EQ(meta.data_shape_[0], 1);
+      ds_msg->seed = CreateNDArrayFromRaw(
+        {meta.data_shape_[1]},
+        DLDataType{kDLInt, 64, 1},
+        DLContext{kDLCPU, 0},
+        recv_seed_msg.data);
+    }
+    // Recv result NDArray
+    if (ds_msg->msg_type == kSampleResponse) {
+      Message recv_result_msg;
+      CHECK_EQ(receiver->RecvFrom(&recv_result_msg, send_id), REMOVE_SUCCESS);
+      CHECK_GE(meta.data_shape_[0], 1);
+      std::vector<int64_t> vec_shape;
+      for (int i = 1; i < meta.data_shape_.size(); ++i) {
+        vec_shape.push_back(meta.data_shape_[i]);
+      }
+      ds_msg->result = CreateNDArrayFromRaw(
+        vec_shape,
+        DLDataType{kDLInt, 64, 1},
+        DLContext{kDLCPU, 0},
+        recv_result_msg.data);
+    }
+    *rv = ds_msg;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgType")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->msg_type;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgRank")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->rank;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgName")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->name;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgFanout")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->fanout;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgSeed")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->seed;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_ReceiverGetDSMsgResult")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    *rv = msg->result;
+  });
+
+DGL_REGISTER_GLOBAL("network._CAPI_DeleteDSMsg")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    DSMsgHandle chandle = args[0];
+    network::DistSampleMsg* msg = static_cast<DistSampleMsg*>(chandle);
+    delete msg;
+  });
+
+
 }  // namespace network
 }  // namespace dgl

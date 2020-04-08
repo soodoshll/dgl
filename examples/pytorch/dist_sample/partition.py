@@ -73,7 +73,7 @@ def main():
 
     # To save partition book 
     assert np.all(global2local >= 0)
-    np.savez(output+'/part_book.npz', part_id = node_parts, global2local = global2local)
+    np.savez(output+'/part_book.npz', num_parts = num_parts, part_id = node_parts, global2local = global2local)
     
 
     num_cuts = g.number_of_edges() - tot_num_inner_edges

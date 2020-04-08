@@ -193,6 +193,9 @@ class KVMsgType(Enum):
     BARRIER = 6
     IP_ID = 7
 
+    SAMPLE_REQUEST = 8
+    SAMPLE_RESPONSE = 9
+
 
 KVStoreMsg = namedtuple("KVStoreMsg", "type rank name id data c_ptr")
 """Message of DGL kvstore
@@ -327,3 +330,146 @@ def _clear_kv_msg(msg):
     F.sync()
     if msg.c_ptr is not None:
         _CAPI_DeleteKVMsg(msg.c_ptr)
+
+
+################################ Distributed Sampling ################################
+
+DistSampleMsg = namedtuple("DistSampleMsg", "type rank fanout name seed result c_ptr")
+def _send_ds_msg(sender, msg, recv_id):
+    """Send kvstore message.
+
+    Parameters
+    ----------
+    sender : ctypes.c_void_p
+        C sender handle
+    msg : KVStoreMsg
+        kvstore message
+    recv_id : int
+        receiver's ID
+    """
+    if msg.type == KVMsgType.SAMPLE_REQUEST:
+        tensor_seed = F.zerocopy_to_dgl_ndarray(msg.seed)
+        _CAPI_SenderSendDSMsg(
+            sender,
+            int(recv_id),
+            msg.type.value,
+            msg.rank,
+            msg.fanout
+            msg.name,
+            tensor_seed)
+    elif msg.type == KVMsgType.SAMPLE_RESPONSE:
+        tensor_result = F.zerocopy_to_dgl_ndarray(msg.result)
+        _CAPI_SenderSendDSMsg(
+            sender,
+            int(recv_id),
+            msg.type.value,
+            msg.rank,
+            0,
+            msg.name,
+            tensor_result)
+    elif msg.type == KVMsgType.IP_ID:
+        _CAPI_SenderSendDSMsg(
+            sender,
+            int(recv_id),
+            msg.type.value,
+            msg.rank,
+            0,
+            msg.name)
+    elif msg.type in (KVMsgType.FINAL, KVMsgType.BARRIER):
+        _CAPI_SenderSendDSMsg(
+            sender,
+            int(recv_id),
+            msg.type.value,
+            msg.rank,
+            0)
+    else:
+        _CAPI_SenderSendDSMsg(
+            sender,
+            int(recv_id),
+            msg.type.value,
+            msg.rank,
+            msg.name)
+
+
+def _recv_ds_msg(receiver):
+    """Receive kvstore message.
+
+    Parameters
+    ----------
+    receiver : ctypes.c_void_p
+        C Receiver handle
+    Return
+    ------
+    KVStoreMsg
+        kvstore message
+    """
+    msg_ptr = _CAPI_ReceiverRecvDSMsg(receiver)
+    msg_type = KVMsgType(_CAPI_ReceiverGetDSMsgType(msg_ptr))
+    rank = _CAPI_ReceiverGetDSMsgRank(msg_ptr)
+    fanout = _CAPI_ReceiverGetDSMsgFanout(msg_ptr)
+    if msg_type == KVMsgType.SAMPLE_REQUEST:
+        name = _CAPI_ReceiverGetDSMsgName(msg_ptr)
+        tensor_seed = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetKVMsgSeed(msg_ptr))
+        msg = DistSampleMsg(
+            type=msg_type,
+            rank=rank,
+            fanout=fanout,
+            name=name,
+            seed=tensor_seed,
+            result=None,
+            c_ptr=msg_ptr)
+        return msg
+    elif msg_type == KVMsgType.SAMPLE_RESPONSE:
+        name = _CAPI_ReceiverGetDSMsgName(msg_ptr)
+        tensor_result = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetKVMsgID(msg_ptr))
+        msg = DistSampleMsg(
+            type=msg_type,
+            rank=rank,
+            fanout=0,
+            name=name,
+            seed=None,
+            result=tensor_result,
+            c_ptr=msg_ptr)
+        return msg
+    elif msg_type == KVMsgType.IP_ID:
+        name = _CAPI_ReceiverGetKVMsgName(msg_ptr)
+        msg = DistSampleMsg(
+            type=msg_type,
+            rank=rank,
+            fanout=0,
+            name=name,
+            seed=None,
+            result=None,
+            c_ptr=msg_ptr)
+        return msg
+    elif msg_type in (KVMsgType.FINAL, KVMsgType.BARRIER):
+        msg = DistSampleMsg(
+            type=msg_type,
+            rank=rank,
+            fanout=0,
+            name=None,
+            seed=None,
+            result=None,
+            c_ptr=msg_ptr)
+        return msg
+    else:
+        name = _CAPI_ReceiverGetKVMsgName(msg_ptr)
+        msg = DistSampleMsg(
+            type=msg_type,
+            rank=rank,
+            fanout=0,
+            name=name,
+            seed=None,
+            result=None,
+            c_ptr=msg_ptr)
+        return msg
+
+    raise RuntimeError('Unknown message type: %d' % msg_type.value)
+
+
+def _clear_ds_msg(msg):
+    """Clear data of kvstore message
+    """
+    F.sync()
+    if msg.c_ptr is not None:
+        _CAPI_DeleteDSMsg(msg.c_ptr)

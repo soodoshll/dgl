@@ -64,7 +64,10 @@ enum MessageType {
   /*!
    * \brief IP and ID msg for KVStore
    */  
-  kIPIDMsg = 7
+  kIPIDMsg = 7,
+
+  kSampleRequest = 8,
+  kSampleResponse = 9,
 };
 
 /*!
@@ -194,6 +197,59 @@ class KVStoreMsg {
   * \brief data matrix
   */
   NDArray data;
+};
+
+
+/*!
+ * \brief C structure for holding DGL Distributed sampling message
+ */
+class DistSampleMsg {
+ public:
+  /*!
+   * \brief KVStoreMsg constructor.
+   */
+  DistSampleMsg() {}
+
+  /*!
+   * \brief Construct KVStoreMsg from binary data buffer.
+   * \param buffer data buffer
+   * \param size data size
+   */
+  DistSampleMsg(char* buffer, int64_t size) {
+    CHECK_NOTNULL(buffer);
+    this->Deserialize(buffer, size);
+  }
+  /*!
+   * \brief Serialize KVStoreMsg to data buffer
+   *  Note that we don't serialize ID and data here. 
+   * \param size size of serialized message
+   * \return pointer of data buffer
+   */
+  char* Serialize(int64_t* size);
+
+  /*!
+   * \brief Deserialize KVStoreMsg from data buffer
+   * \param buffer data buffer
+   * \param size size of data buffer
+   */
+  void Deserialize(char* buffer, int64_t size);
+
+  /*!
+    * \brief Message type of kvstore
+    */
+  int msg_type;
+  /*!
+    * \brief Sender's ID
+    */
+  int rank;
+  /*!
+    * \brief data name
+    */
+  std::string name;
+  int fanout;
+
+  NDArray seed;
+  NDArray result;
 };
 
 }  // namespace network
