@@ -12,6 +12,7 @@ This is an example of distributed sampling using dgl.
  
  1. How to do layerwise sampling? 
  1. How to store the partition book efficiently?
+ 1. int32 and int64
 
 ### Usage
 

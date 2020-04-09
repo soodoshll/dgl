@@ -354,7 +354,7 @@ def _send_ds_msg(sender, msg, recv_id):
             int(recv_id),
             msg.type.value,
             msg.rank,
-            msg.fanout
+            msg.fanout,
             msg.name,
             tensor_seed)
     elif msg.type == KVMsgType.SAMPLE_RESPONSE:
@@ -403,13 +403,13 @@ def _recv_ds_msg(receiver):
     KVStoreMsg
         kvstore message
     """
-    msg_ptr = _CAPI_ReceiverRecvDSMsg(receiver)
+    msg_ptr = CAPI_ReceiverRecvDSMsg(receiver)
     msg_type = KVMsgType(_CAPI_ReceiverGetDSMsgType(msg_ptr))
     rank = _CAPI_ReceiverGetDSMsgRank(msg_ptr)
     fanout = _CAPI_ReceiverGetDSMsgFanout(msg_ptr)
     if msg_type == KVMsgType.SAMPLE_REQUEST:
         name = _CAPI_ReceiverGetDSMsgName(msg_ptr)
-        tensor_seed = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetKVMsgSeed(msg_ptr))
+        tensor_seed = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetDSMsgSeed(msg_ptr))
         msg = DistSampleMsg(
             type=msg_type,
             rank=rank,
@@ -421,7 +421,7 @@ def _recv_ds_msg(receiver):
         return msg
     elif msg_type == KVMsgType.SAMPLE_RESPONSE:
         name = _CAPI_ReceiverGetDSMsgName(msg_ptr)
-        tensor_result = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetKVMsgID(msg_ptr))
+        tensor_result = F.zerocopy_from_dgl_ndarray(_CAPI_ReceiverGetDSMsgResult(msg_ptr))
         msg = DistSampleMsg(
             type=msg_type,
             rank=rank,
@@ -432,7 +432,7 @@ def _recv_ds_msg(receiver):
             c_ptr=msg_ptr)
         return msg
     elif msg_type == KVMsgType.IP_ID:
-        name = _CAPI_ReceiverGetKVMsgName(msg_ptr)
+        name = _CAPI_ReceiverGetDSMsgName(msg_ptr)
         msg = DistSampleMsg(
             type=msg_type,
             rank=rank,

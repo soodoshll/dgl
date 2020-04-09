@@ -613,6 +613,8 @@ char* DistSampleMsg::Serialize(int64_t* size) {
   int64_t buffer_size = 0;
   buffer_size += sizeof(this->msg_type);
   buffer_size += sizeof(this->rank);
+  buffer_size += sizeof(this->fanout);
+
   if (!this->name.empty()) {
     buffer_size += sizeof(this->name.size());
     buffer_size += this->name.size();
@@ -838,5 +840,84 @@ DGL_REGISTER_GLOBAL("network._CAPI_DeleteDSMsg")
   });
 
 
+void _SendSampleRequest(network::Sender* sender,const size_t recv_id, 
+                        const std::vector<dgl_id_t> &seeds, int fanout, const size_t client_id) {
+    DistSampleMsg ds_msg;
+    ds_msg.msg_type = kSampleRequest;
+    ds_msg.rank = client_id;
+    ds_msg.fanout = fanout;
+    ds_msg.name = " ";
+std::cout << "target:" << recv_id << " rank:" << client_id << " fanout:" << fanout << " name:" << ds_msg.name << std::endl; 
+    // Is this conversion necessary?
+    ds_msg.seed = NDArray::FromVector(seeds);
+std::cout << "Seed data conversion finish" << std::endl;
+    int64_t ds_size = 0;
+    char* ds_data = ds_msg.Serialize(&ds_size);
+std::cout << "Finish serialization" << std::endl;
+    // Send kv_data
+    Message send_ds_msg;
+    send_ds_msg.data = ds_data;
+    send_ds_msg.size = ds_size;
+    send_ds_msg.deallocator = DefaultMessageDeleter;
+std::cout << "before ds_data sent" << std::endl;
+    CHECK_EQ(sender->Send(send_ds_msg, recv_id), ADD_SUCCESS);
+std::cout << "ds_data sent" << std::endl;
+    ArrayMeta meta(ds_msg.msg_type);
+    meta.AddArray(ds_msg.seed);
+    int64_t meta_size = 0;
+    char* meta_data = meta.Serialize(&meta_size);
+    Message send_meta_msg;
+    send_meta_msg.data = meta_data;
+    send_meta_msg.size = meta_size;
+    send_meta_msg.deallocator = DefaultMessageDeleter;
+    CHECK_EQ(sender->Send(send_meta_msg, recv_id), ADD_SUCCESS);
+std::cout << "arraymeta sent." << std::endl;
+    // Send seed NDArray
+    Message send_seed_msg;
+    send_seed_msg.data = static_cast<char*>(ds_msg.seed->data);
+    send_seed_msg.size = ds_msg.seed.GetSize();
+    NDArray data = ds_msg.seed;
+    send_seed_msg.deallocator = [data](Message*) {};
+    CHECK_EQ(sender->Send(send_seed_msg, recv_id), ADD_SUCCESS);
+}
+
+// For Distributed sampling
+DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+  CommunicatorHandle chandle = args[0];
+  network::Sender* sender = static_cast<network::Sender*>(chandle);
+
+  const int client_id = args[1];
+  const int num_parts = args[2];
+  NDArray part_ids = args[3];
+  IdArray seed_nodes = args[4];
+  int fanout = args[5];
+  
+  std::vector<dgl_id_t> part_req[num_parts];
+
+  const int64_t seed_size = seed_nodes->shape[0];
+  const dgl_id_t *seed_arr = static_cast<dgl_id_t *>(seed_nodes->data);
+  const int64_t *part_id_arr = static_cast<int64_t *>(part_ids->data);
+  for (size_t i = 0 ; i < seed_size; ++i) {
+    const dgl_id_t node_id = seed_arr[i];
+    const int64_t part_id = part_id_arr[node_id];
+    part_req[part_id].emplace_back(node_id);
+  }
+  
+  for (size_t i = 0 ; i < num_parts; i++) {
+    std::cout << "#" << i << " : " << part_req[i].size() << std::endl;
+  }
+
+  // TODO: Use OpenMP to optimize
+  for (size_t i = 0 ; i < num_parts; i++)
+    if (!part_req[i].empty()) {
+      _SendSampleRequest(sender, i, part_req[i], fanout, client_id);
+    }
+});
+
+DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingResponse")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+
+});
 }  // namespace network
 }  // namespace dgl

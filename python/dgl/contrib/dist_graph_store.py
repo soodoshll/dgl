@@ -64,14 +64,20 @@ class DistGraphStoreServer(object):
                     seed=None,
                     result=None,
                     c_ptr=None)
-                _send_kv_msg(self._sender, msg, client_id)
+                _send_ds_msg(self._sender, msg, client_id)
+
         print('Distributed Sampling service %d start successfully! Listen for request ...' % self._server_id)
 
         # Service loop
         # TODO: rewrite in C++ with multi-threads
         while True:
-            msg = _recv_kv_msg(self._receiver)
-            seed = msg.data
+            msg = _recv_ds_msg(self._receiver)
+            print(msg.type)
+            if msg.type == KVMsgType.FINAL:
+                print("Exit KVStore service %d." % (self._server_id))
+                break # exit loop
+            seed = msg.seed
+            print(seed)
 
 
     def neighbor_sample(self, seed, fanout):
@@ -95,7 +101,12 @@ class DistGraphStore(object):
 
     def neighbor_sample(self, seed, fanout):
         # This part should be done in C++
-        _CAPI_RemoteSamplingReqeust(self._num_parts, self._part_id, F.zerocopy_to_dgl_ndarray(seed), fanout)
+        _CAPI_RemoteSamplingReqeust(self._sender,
+                                    self._client_id,
+                                    self._num_parts,
+                                    self._part_id, 
+                                    F.zerocopy_to_dgl_ndarray(seed), 
+                                    fanout)
     
     def connect(self):
         for ID, addr in self._server_namebook.items():
@@ -107,7 +118,7 @@ class DistGraphStore(object):
         self._addr = self._get_local_usable_addr()
         client_ip, client_port = self._addr.split(':')
 
-        msg = KVStoreMsg(
+        msg = DistSampleMsg(
             type=KVMsgType.IP_ID,
             rank=0, # a tmp client ID
             fanout=0,
@@ -117,15 +128,30 @@ class DistGraphStore(object):
             c_ptr=None)
         
         for server_id in range(self._num_servers):
-            _send_kv_msg(self._sender, msg, server_id)
+            _send_ds_msg(self._sender, msg, server_id)
 
         _receiver_wait(self._receiver, client_ip, int(client_port), self._num_servers)
 
-        msg = _recv_kv_msg(self._receiver)
+        msg = _recv_ds_msg(self._receiver)
         assert msg.rank == 0
         self._client_id = int(msg.name)
         print("Distributed Sampling Client %d connect to the server successfully!" % self._client_id)
 
+    def shut_down(self):
+        """Shut down all KVServer nodes.
+
+        We usually invoke this API by just one client (e.g., client_0).
+        """
+        for server_id in range(self._num_servers):
+            msg = DistSampleMsg(
+                type=KVMsgType.FINAL,
+                rank=self._client_id,
+                fanout=0,
+                name=None,
+                seed=None,
+                result=None,
+                c_ptr=None)
+            _send_ds_msg(self._sender, msg, server_id)
 
     def _get_local_usable_addr(self):
         """Get local available IP and port
@@ -153,4 +179,4 @@ class DistGraphStore(object):
 
         return IP + ':' + str(port)
 
-_init_api('dgl.sampling', __name__)
+_init_api('dgl.network', __name__)

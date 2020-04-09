@@ -1927,35 +1927,4 @@ DGL_REGISTER_GLOBAL("sampling._CAPI_ResetWeightedEdgeSample")
   sampler->Reset();
 });
 
-// For Distributed sampling
-DGL_REGISTER_GLOBAL("sampling._CAPI_RemoteSamplingReqeust")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-  const int64_t num_parts = args[0];
-
-  // How do I transfer numpy array to NDArray
-  NDArray part_ids = args[1];
-
-  // Should I use IDArray?
-  IdArray seed_nodes = args[2];
-  std::vector<dgl_id_t> part_req[num_parts];
-
-  const int64_t seed_size = seed_nodes->shape[0];
-  const dgl_id_t *seed_arr = static_cast<dgl_id_t *>(seed_nodes->data);
-  const int64_t *part_id_arr = static_cast<int64_t *>(part_ids->data);
-  for (int64_t i = 0 ; i < seed_size; ++i) {
-    const dgl_id_t node_id = seed_arr[i];
-    const int64_t part_id = part_id_arr[node_id];
-    part_req[part_id].emplace_back(node_id);
-  }
-  
-  for (size_t i = 0 ; i < num_parts; i++) {
-    std::cout << "#" << i << " : " << part_req[i].size() << std::endl;
-  }
-});
-
-DGL_REGISTER_GLOBAL("sampling._CAPI_RemoteSamplingResponse")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-
-});
-
 }  // namespace dgl

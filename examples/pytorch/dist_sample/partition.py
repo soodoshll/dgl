@@ -49,6 +49,8 @@ def main():
         raise Exception('unknown partitioning method: ' + args.method)
 
     global2local = np.zeros(g.number_of_nodes(), dtype=np.int64) - 1
+    if num_parts == 1:
+        global2local = np.arange(0, g.number_of_nodes(), dtype=np.int64)
     tot_num_inner_edges = 0
     for part_id in range(num_parts):
         part = server_parts[part_id]
