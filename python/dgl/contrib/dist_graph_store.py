@@ -69,15 +69,7 @@ class DistGraphStoreServer(object):
         print('Distributed Sampling service %d start successfully! Listen for request ...' % self._server_id)
 
         # Service loop
-        # TODO: rewrite in C++ with multi-threads
-        while True:
-            msg = _recv_ds_msg(self._receiver)
-            print(msg.type)
-            if msg.type == KVMsgType.FINAL:
-                print("Exit KVStore service %d." % (self._server_id))
-                break # exit loop
-            seed = msg.seed
-            print(seed)
+        _CAPI_RemoteSamplingServerLoop(self._receiver)
 
 
     def neighbor_sample(self, seed, fanout):

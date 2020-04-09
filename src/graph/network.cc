@@ -669,28 +669,7 @@ void DistSampleMsg::Deserialize(char* buffer, int64_t size) {
   CHECK_EQ(data_size, size);
 }
 
-
-DGL_REGISTER_GLOBAL("network._CAPI_SenderSendDSMsg")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-    int args_count = 0;
-    CommunicatorHandle chandle = args[args_count++];
-    int recv_id = args[args_count++];
-    DistSampleMsg ds_msg;
-    ds_msg.msg_type = args[args_count++];
-    ds_msg.rank = args[args_count++];
-    ds_msg.fanout = args[args_count++];
-
-    network::Sender* sender = static_cast<network::Sender*>(chandle);
-    if (ds_msg.msg_type != kFinalMsg && ds_msg.msg_type != kBarrierMsg) {
-      std::string name = args[args_count++];
-      ds_msg.name = name;
-      if (ds_msg.msg_type == kSampleRequest) {
-        ds_msg.seed = args[args_count++];
-      }
-      if (ds_msg.msg_type == kSampleResponse) {
-        ds_msg.result = args[args_count++];
-      }
-    }
+void _SendDSMsg(network::Sender *sender, const size_t recv_id, DistSampleMsg &ds_msg) {
     int64_t ds_size = 0;
     char* ds_data = ds_msg.Serialize(&ds_size);
     // Send kv_data
@@ -737,12 +716,33 @@ DGL_REGISTER_GLOBAL("network._CAPI_SenderSendDSMsg")
         CHECK_EQ(sender->Send(send_result_msg, recv_id), ADD_SUCCESS);
       }
     }
+}
+
+DGL_REGISTER_GLOBAL("network._CAPI_SenderSendDSMsg")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    int args_count = 0;
+    CommunicatorHandle chandle = args[args_count++];
+    int recv_id = args[args_count++];
+    DistSampleMsg ds_msg;
+    ds_msg.msg_type = args[args_count++];
+    ds_msg.rank = args[args_count++];
+    ds_msg.fanout = args[args_count++];
+
+    network::Sender* sender = static_cast<network::Sender*>(chandle);
+    if (ds_msg.msg_type != kFinalMsg && ds_msg.msg_type != kBarrierMsg) {
+      std::string name = args[args_count++];
+      ds_msg.name = name;
+      if (ds_msg.msg_type == kSampleRequest) {
+        ds_msg.seed = args[args_count++];
+      }
+      if (ds_msg.msg_type == kSampleResponse) {
+        ds_msg.result = args[args_count++];
+      }
+    }
+    _SendDSMsg(sender, recv_id, ds_msg);
   });
 
-DGL_REGISTER_GLOBAL("network.CAPI_ReceiverRecvDSMsg")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-    CommunicatorHandle chandle = args[0];
-    network::Receiver* receiver = static_cast<network::SocketReceiver*>(chandle);
+DistSampleMsg *_RecvDSMsg(network::Receiver* receiver){
     DistSampleMsg *ds_msg = new DistSampleMsg();
     // Recv kv_Msg
     Message recv_ds_msg;
@@ -753,8 +753,7 @@ DGL_REGISTER_GLOBAL("network.CAPI_ReceiverRecvDSMsg")
     if (ds_msg->msg_type == kFinalMsg ||
         ds_msg->msg_type == kBarrierMsg ||
         ds_msg->msg_type == kIPIDMsg) {
-      *rv = ds_msg;
-      return;
+      return ds_msg;
     }
     // Recv ArrayMeta
     Message recv_meta_msg;
@@ -787,6 +786,14 @@ DGL_REGISTER_GLOBAL("network.CAPI_ReceiverRecvDSMsg")
         DLContext{kDLCPU, 0},
         recv_result_msg.data);
     }
+    return ds_msg;
+};
+
+DGL_REGISTER_GLOBAL("network.CAPI_ReceiverRecvDSMsg")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    CommunicatorHandle chandle = args[0];
+    network::Receiver* receiver = static_cast<network::SocketReceiver*>(chandle);
+    DistSampleMsg *ds_msg = _RecvDSMsg(receiver);
     *rv = ds_msg;
   });
 
@@ -851,34 +858,7 @@ std::cout << "target:" << recv_id << " rank:" << client_id << " fanout:" << fano
     // Is this conversion necessary?
     ds_msg.seed = NDArray::FromVector(seeds);
 std::cout << "Seed data conversion finish" << std::endl;
-    int64_t ds_size = 0;
-    char* ds_data = ds_msg.Serialize(&ds_size);
-std::cout << "Finish serialization" << std::endl;
-    // Send kv_data
-    Message send_ds_msg;
-    send_ds_msg.data = ds_data;
-    send_ds_msg.size = ds_size;
-    send_ds_msg.deallocator = DefaultMessageDeleter;
-std::cout << "before ds_data sent" << std::endl;
-    CHECK_EQ(sender->Send(send_ds_msg, recv_id), ADD_SUCCESS);
-std::cout << "ds_data sent" << std::endl;
-    ArrayMeta meta(ds_msg.msg_type);
-    meta.AddArray(ds_msg.seed);
-    int64_t meta_size = 0;
-    char* meta_data = meta.Serialize(&meta_size);
-    Message send_meta_msg;
-    send_meta_msg.data = meta_data;
-    send_meta_msg.size = meta_size;
-    send_meta_msg.deallocator = DefaultMessageDeleter;
-    CHECK_EQ(sender->Send(send_meta_msg, recv_id), ADD_SUCCESS);
-std::cout << "arraymeta sent." << std::endl;
-    // Send seed NDArray
-    Message send_seed_msg;
-    send_seed_msg.data = static_cast<char*>(ds_msg.seed->data);
-    send_seed_msg.size = ds_msg.seed.GetSize();
-    NDArray data = ds_msg.seed;
-    send_seed_msg.deallocator = [data](Message*) {};
-    CHECK_EQ(sender->Send(send_seed_msg, recv_id), ADD_SUCCESS);
+    _SendDSMsg(sender, recv_id, ds_msg);
 }
 
 // For Distributed sampling
@@ -915,9 +895,20 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
     }
 });
 
-DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingResponse")
+DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
 .set_body([] (DGLArgs args, DGLRetValue* rv) {
+  CommunicatorHandle chandle = args[0];
+  network::Receiver* receiver = static_cast<network::Receiver*>(chandle);
 
+  while (true) {
+    DistSampleMsg *msg = _RecvDSMsg(receiver);
+    if (msg->msg_type == kFinalMsg) {
+      std::cout << "Service stops." << std::endl;
+      return ;
+    }
+    std::cout << "new message received" << std::endl;
+    delete msg;
+  }
 });
 }  // namespace network
 }  // namespace dgl
