@@ -15,6 +15,7 @@
 
 #include "../c_api_common.h"
 #include "./network/msg_queue.h"
+#include "stream.h"
 
 using dgl::runtime::NDArray;
 
@@ -73,7 +74,7 @@ enum MessageType {
 /*!
  * \brief Meta data for NDArray message
  */
-class ArrayMeta {
+class ArrayMeta : public dmlc::Serializable{
  public:
   /*!
    * \brief ArrayMeta constructor.
@@ -82,6 +83,7 @@ class ArrayMeta {
   explicit ArrayMeta(int msg_type)
   : msg_type_(msg_type), ndarray_count_(0) {}
 
+  explicit ArrayMeta(dmlc::Stream *stream) { this->Load(stream); }
   /*!
    * \brief Construct ArrayMeta from binary data buffer.
    * \param buffer data buffer
@@ -126,6 +128,8 @@ class ArrayMeta {
    */
   void Deserialize(char* buffer, int64_t size);
 
+  virtual void Save(dmlc::Stream *stream) const;
+  virtual void Load(dmlc::Stream *stream);
   /*!
    * \brief type of message
    */
@@ -203,7 +207,7 @@ class KVStoreMsg {
 /*!
  * \brief C structure for holding DGL Distributed sampling message
  */
-class DistSampleMsg {
+class DistSampleMsg : public dmlc::Serializable{
  public:
   /*!
    * \brief KVStoreMsg constructor.
@@ -250,6 +254,9 @@ class DistSampleMsg {
 
   NDArray seed;
   NDArray result;
+
+  void Load(dmlc::Stream *stream) override;
+  void Save(dmlc::Stream *stream) const override;
 };
 
 }  // namespace network

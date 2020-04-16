@@ -202,6 +202,9 @@ class HeteroGraph : public BaseHeteroGraph {
   /*! \return Save HeteroGraph to stream, using CSRMatrix */
   void Save(dmlc::Stream* fs) const;
 
+  // bool LoadAsCOO(dmlc::Stream *stream) ;
+  // void SaveAsCOO(dmlc::Stream *stream) const;
+
  private:
   // To create empty class
   friend class Serializer;

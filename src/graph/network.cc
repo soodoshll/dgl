@@ -10,6 +10,7 @@
 #include <dgl/packed_func_ext.h>
 #include <dgl/immutable_graph.h>
 #include <dgl/nodeflow.h>
+#include <dgl/sampling/neighbor.h>
 
 #include <unordered_map>
 
@@ -97,6 +98,18 @@ char* ArrayMeta::Serialize(int64_t* size) {
   }
   *size = buffer_size;
   return buffer;
+}
+
+void ArrayMeta::Save(dmlc::Stream *stream) const{
+  stream->Write(msg_type_);
+  stream->Write(ndarray_count_);
+  stream->Write(data_shape_);
+}
+
+void ArrayMeta::Load(dmlc::Stream *stream){
+  stream->Read(&msg_type_);
+  stream->Read(&ndarray_count_);
+  stream->Write(data_shape_);
 }
 
 void ArrayMeta::Deserialize(char* buffer, int64_t size) {
@@ -669,6 +682,13 @@ void DistSampleMsg::Deserialize(char* buffer, int64_t size) {
   CHECK_EQ(data_size, size);
 }
 
+void DistSampleMsg::Load(dmlc::Stream *stream) {
+  stream->Read(&this->msg_type);
+  stream->Read(&this->rank);
+  stream->Read(&this->fanout);
+  stream->Read(&this->name);
+}
+
 void _SendDSMsg(network::Sender *sender, const size_t recv_id, DistSampleMsg &ds_msg) {
     int64_t ds_size = 0;
     char* ds_data = ds_msg.Serialize(&ds_size);
@@ -846,6 +866,85 @@ DGL_REGISTER_GLOBAL("network._CAPI_DeleteDSMsg")
     delete msg;
   });
 
+void _StreamSendDSMsg(network::Sender *sender, const size_t recv_id, DistSampleMsg &ds_msg) {
+    int64_t ds_size = 0;
+    BufferStream bs;
+    Message send_ds_msg;
+    ds_msg.Save(&bs);
+    CHECK_EQ(sender->Send(bs.ToMessage(), recv_id), ADD_SUCCESS);
+
+    if (ds_msg.msg_type != kFinalMsg &&
+        ds_msg.msg_type != kBarrierMsg &&
+        ds_msg.msg_type != kIPIDMsg) {
+      // Send ArrayMeta
+      ArrayMeta meta(ds_msg.msg_type);
+      if (ds_msg.msg_type == kSampleRequest) {
+        meta.AddArray(ds_msg.seed);
+      }
+      if (ds_msg.msg_type == kSampleResponse) {
+        meta.AddArray(ds_msg.result);
+      }
+      bs.Reset();
+      meta.Save(&bs);
+      CHECK_EQ(sender->Send(bs.ToMessage(), recv_id), ADD_SUCCESS);
+      // Send seed NDArray
+      if (ds_msg.msg_type == kSampleRequest) {
+        CHECK_EQ(sender->Send(Message(ds_msg.seed), recv_id), ADD_SUCCESS);
+      }
+      // Send result NDArray
+      if (ds_msg.msg_type == kSampleResponse) {
+        CHECK_EQ(sender->Send(Message(ds_msg.result), recv_id), ADD_SUCCESS);
+      }
+    }
+}
+
+DistSampleMsg *_StreamRecvDSMsg(network::Receiver* receiver) {
+    DistSampleMsg *ds_msg = new DistSampleMsg();
+    // Recv kv_Msg
+    Message recv_ds_msg;
+    int send_id;
+    InputBufferStream is;
+    CHECK_EQ(receiver->Recv(&recv_ds_msg, &send_id), REMOVE_SUCCESS);
+    is.Reset(recv_ds_msg.data);
+    recv_ds_msg.deallocator(&recv_ds_msg);
+
+    ds_msg->Load(&is);
+    // Recv ArrayMeta
+    Message recv_meta_msg;
+    CHECK_EQ(receiver->RecvFrom(&recv_meta_msg, send_id), REMOVE_SUCCESS);
+    is.Reset(recv_meta_msg.data);
+    ArrayMeta meta(&is);
+    recv_meta_msg.deallocator(&recv_meta_msg);
+
+    // Recv seed NDArray
+    if (ds_msg->msg_type == kSampleRequest) {
+      Message recv_seed_msg;
+      CHECK_EQ(receiver->RecvFrom(&recv_seed_msg, send_id), REMOVE_SUCCESS);
+      CHECK_EQ(meta.data_shape_[0], 1);
+      ds_msg->seed = CreateNDArrayFromRaw(
+        {meta.data_shape_[1]},
+        DLDataType{kDLInt, 64, 1},
+        DLContext{kDLCPU, 0},
+        recv_seed_msg.data);
+    }
+    
+    // Recv result NDArray
+    if (ds_msg->msg_type == kSampleResponse) {
+      Message recv_result_msg;
+      CHECK_EQ(receiver->RecvFrom(&recv_result_msg, send_id), REMOVE_SUCCESS);
+      CHECK_GE(meta.data_shape_[0], 1);
+      std::vector<int64_t> vec_shape;
+      for (int i = 1; i < meta.data_shape_.size(); ++i) {
+        vec_shape.push_back(meta.data_shape_[i]);
+      }
+      ds_msg->result = CreateNDArrayFromRaw(
+        vec_shape,
+        DLDataType{kDLInt, 64, 1},
+        DLContext{kDLCPU, 0},
+        recv_result_msg.data);
+    }
+    return ds_msg;
+};
 
 void _SendSampleRequest(network::Sender* sender,const size_t recv_id, 
                         const std::vector<dgl_id_t> &seeds, int fanout, const size_t client_id) {
@@ -864,16 +963,18 @@ std::cout << "Seed data conversion finish" << std::endl;
 // For Distributed sampling
 DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
 .set_body([] (DGLArgs args, DGLRetValue* rv) {
-  CommunicatorHandle chandle = args[0];
-  network::Sender* sender = static_cast<network::Sender*>(chandle);
+  CommunicatorHandle rchandle = args[0];
+  network::Receiver* receiver = static_cast<network::Receiver*>(rchandle);
+  CommunicatorHandle schandle = args[1];
+  network::Sender* sender = static_cast<network::Sender*>(schandle);
 
-  const int client_id = args[1];
-  const int num_parts = args[2];
-  NDArray part_ids = args[3];
-  IdArray seed_nodes = args[4];
-  int fanout = args[5];
+  const int client_id = args[2];
+  const int num_parts = args[3];
+  NDArray part_ids = args[4];
+  IdArray seed_nodes = args[5];
+  int64_t fanout = args[6];
   
-  std::vector<dgl_id_t> part_req[num_parts];
+  std::vector<dgl_id_t> *part_req = new std::vector<dgl_id_t>[num_parts];
 
   const int64_t seed_size = seed_nodes->shape[0];
   const dgl_id_t *seed_arr = static_cast<dgl_id_t *>(seed_nodes->data);
@@ -892,13 +993,24 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
   for (size_t i = 0 ; i < num_parts; i++)
     if (!part_req[i].empty()) {
       _SendSampleRequest(sender, i, part_req[i], fanout, client_id);
+      Message *msg = new Message;
+      receiver->RecvFrom(msg, i);
+      delete msg;
+std::cout << "response received" << std::endl;
     }
+  
+  delete []part_req;
 });
 
 DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
 .set_body([] (DGLArgs args, DGLRetValue* rv) {
-  CommunicatorHandle chandle = args[0];
-  network::Receiver* receiver = static_cast<network::Receiver*>(chandle);
+  CommunicatorHandle rchandle = args[0];
+  network::Receiver* receiver = static_cast<network::Receiver*>(rchandle);
+  CommunicatorHandle schandle = args[1];
+  network::Sender* sender = static_cast<network::Sender*>(schandle);
+
+  HeteroGraphRef hg = args[2];
+  const auto& prob = ListValueToVector<FloatArray>(args[3]);
 
   while (true) {
     DistSampleMsg *msg = _RecvDSMsg(receiver);
@@ -907,8 +1019,47 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
       return ;
     }
     std::cout << "new message received" << std::endl;
+
+    std::vector<int64_t> fanouts;
+    fanouts.emplace_back(msg->fanout);
+
+    std::vector<IdArray> nodes;
+    nodes.emplace_back(msg->seed);
+
+    std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
+    *subg = dgl::sampling::SampleNeighbors(
+      hg.sptr(), nodes, fanouts, EdgeDir::kIn, prob, false
+    );
+    std::cout << "sampling finished" << std::endl;
+    std::cout << subg->induced_vertices.size() << std::endl;
+    for (const auto &n : subg->induced_vertices) {
+    //   // for (const auto &v : n.ToVector<int64_t>()){
+    //   //   std::cout << v << ' ';
+    //   // }
+      std::cout << "induced_vertices: " << std::endl;
+    }
+
+    BufferStream bs;
+    subg->Save(&bs);
+    sender->Send(bs.ToMessage(), msg->rank);
+    std::cout << "subgraph sent back" << std::endl;
+
     delete msg;
   }
 });
+
+void DistSampleMsg::Save(dmlc::Stream *stream) const {
+  stream->Write(this->msg_type);
+  stream->Write(this->rank);
+  stream->Write(this->fanout);
+  stream->Write(this->name);
+
+  stream->Write(this->result);
+  stream->Write(this->seed);
+}
+
+
+
+
 }  // namespace network
 }  // namespace dgl

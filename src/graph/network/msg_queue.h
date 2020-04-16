@@ -17,6 +17,8 @@
 #include <atomic>
 #include <functional>
 
+#include "../../c_api_common.h"
+
 namespace dgl {
 namespace network {
 
@@ -48,6 +50,8 @@ struct Message {
   Message(char* data_ptr, int64_t data_size)
   : data(data_ptr), size(data_size) { }
 
+  Message(NDArray array)
+  : data(static_cast<char*>(array->data)), size(array.GetSize()) {}
   /*!
    * \brief message data
    */

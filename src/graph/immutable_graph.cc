@@ -574,11 +574,26 @@ bool ImmutableGraph::Load(dmlc::Stream *fs) {
   return true;
 }
 
+// bool ImmutableGraph::LoadAsCOO(dmlc::Stream *fs) {
+//   uint64_t magicNum;
+//   // aten::CSRMatrix out_csr_matrix;
+//   CHECK(fs->Read(&magicNum)) << "Invalid Magic Number";
+//   CHECK_EQ(magicNum, kDGLSerialize_ImGraph)
+//       << "Invalid ImmutableGraph Magic Number";
+//   CHECK(fs->Read(&coo_)) << "Invalid coo matrix";
+//   return true;
+// }
+
 /*! \return Save HeteroGraph to stream, using OutCSR Matrix */
 void ImmutableGraph::Save(dmlc::Stream *fs) const {
   fs->Write(kDGLSerialize_ImGraph);
   fs->Write(GetOutCSR());
 }
+
+// void ImmutableGraph::SaveAsCOO(dmlc::Stream *fs) const {
+//   fs->Write(kDGLSerialize_ImGraph);
+//   // fs->Write(coo_->);
+// }
 
 HeteroGraphPtr ImmutableGraph::AsHeteroGraph() const {
   aten::CSRMatrix in_csr, out_csr;

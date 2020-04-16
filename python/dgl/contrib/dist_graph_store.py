@@ -20,6 +20,9 @@ class DistGraphStoreServer(object):
         self._server_namebook = server_namebook
         self._server_id = server_id
         self._local_g = load_graphs(local_data)[0][0]
+        self._local_g.ndata['_TYPE'] = F.zeros(self._local_g.number_of_nodes(), dtype=F.int64, ctx=F.cpu())
+        self._local_g.edata['_TYPE'] = F.zeros(self._local_g.number_of_edges(), dtype=F.int64, ctx=F.cpu())
+        self._local_g = dgl.to_hetero(self._local_g, ["default"], ["default"])
         self._part_book = np.load(partition_book)
         self._global2local = self._part_book['global2local']
 
@@ -67,9 +70,9 @@ class DistGraphStoreServer(object):
                 _send_ds_msg(self._sender, msg, client_id)
 
         print('Distributed Sampling service %d start successfully! Listen for request ...' % self._server_id)
-
+        prob_arrays = [utils.nd.array([], ctx=utils.nd.cpu())]
         # Service loop
-        _CAPI_RemoteSamplingServerLoop(self._receiver)
+        _CAPI_RemoteSamplingServerLoop(self._receiver, self._sender, self._local_g._graph, prob_arrays)
 
 
     def neighbor_sample(self, seed, fanout):
@@ -93,7 +96,8 @@ class DistGraphStore(object):
 
     def neighbor_sample(self, seed, fanout):
         # This part should be done in C++
-        _CAPI_RemoteSamplingReqeust(self._sender,
+        _CAPI_RemoteSamplingReqeust(self._receiver, 
+                                    self._sender,
                                     self._client_id,
                                     self._num_parts,
                                     self._part_id, 

@@ -490,6 +490,9 @@ struct HeteroSubgraph : public runtime::Object {
    */
   std::vector<IdArray> induced_edges;
 
+  void Save(dmlc::Stream *stream) const;
+  void Load(dmlc::Stream *stream);
+
   static constexpr const char* _type_key = "graph.HeteroSubgraph";
   DGL_DECLARE_OBJECT_TYPE_INFO(HeteroSubgraph, runtime::Object);
 };

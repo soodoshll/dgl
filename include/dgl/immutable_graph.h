@@ -944,8 +944,12 @@ class ImmutableGraph: public GraphInterface {
   /*! \return Load ImmutableGraph from stream, using out csr */
   bool Load(dmlc::Stream *fs);
 
+  // bool LoadAsCOO(dmlc::Stream *fs);
+
   /*! \return Save ImmutableGraph to stream, using out csr */
   void Save(dmlc::Stream* fs) const;
+
+  // void SaveAsCOO(dmlc::Stream *stream) const;
 
   void SortCSR() {
     GetInCSR()->SortCSR();
