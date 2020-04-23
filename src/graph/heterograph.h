@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "./unit_graph.h"
+#include "stream.h"
 
 namespace dgl {
 
@@ -23,6 +24,8 @@ class HeteroGraph : public BaseHeteroGraph {
       GraphPtr meta_graph,
       const std::vector<HeteroGraphPtr>& rel_graphs,
       const std::vector<int64_t>& num_nodes_per_type = {});
+
+  explicit HeteroGraph(dmlc::Stream *stream);
 
   HeteroGraphPtr GetRelationGraph(dgl_type_t etype) const override {
     CHECK_LT(etype, meta_graph_->NumEdges()) << "Invalid edge type: " << etype;

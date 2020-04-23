@@ -348,18 +348,6 @@ bool HeteroGraph::Load(dmlc::Stream* fs) {
   return true;
 }
 
-// bool HeteroGraph::LoadAsCOO(dmlc::Stream* fs) {
-//   uint64_t magicNum;
-//   CHECK(fs->Read(&magicNum)) << "Invalid Magic Number";
-//   CHECK_EQ(magicNum, kDGLSerialize_HeteroGraph) << "Invalid HeteroGraph Data";
-//   auto meta_imgraph = Serializer::make_shared<ImmutableGraph>();
-//   CHECK(meta_imgraph->LoadAsCOO(fs)) << "Invalid meta graph";
-//   meta_graph_ = meta_imgraph;
-//   CHECK(fs->Read(&relation_graphs_)) << "Invalid relation_graphs_";
-//   CHECK(fs->Read(&num_verts_per_type_)) << "Invalid num_verts_per_type_";
-//   return true;
-// }
-
 void HeteroGraph::Save(dmlc::Stream* fs) const {
   fs->Write(kDGLSerialize_HeteroGraph);
   auto meta_graph_ptr = ImmutableGraph::ToImmutable(meta_graph());
@@ -367,14 +355,6 @@ void HeteroGraph::Save(dmlc::Stream* fs) const {
   fs->Write(relation_graphs_);
   fs->Write(num_verts_per_type_);
 }
-
-// void HeteroGraph::SaveAsCOO(dmlc::Stream* fs) const {
-//   fs->Write(kDGLSerialize_HeteroGraph);
-//   auto meta_graph_ptr = ImmutableGraph::ToImmutable(meta_graph());
-//   meta_graph_ptr->SaveAsCOO(fs);
-//   fs->Write(relation_graphs_);
-//   fs->Write(num_verts_per_type_);
-// }
 
 GraphPtr HeteroGraph::AsImmutableGraph() const {
   CHECK(NumVertexTypes() == 1) << "graph has more than one node types";
@@ -385,25 +365,26 @@ GraphPtr HeteroGraph::AsImmutableGraph() const {
 }
 
 void HeteroSubgraph::Save(dmlc::Stream * stream) const {
-
   auto hg_ptr = std::dynamic_pointer_cast<HeteroGraph>(graph);
 std::cout << "pointer conversion finish" << std::endl;
   hg_ptr->Save(stream);
 std::cout << "graph written" << std::endl;
   stream->Write(induced_vertices);
 std::cout << "induced_vertices written" << std::endl;
-  // stream->Write(induced_edges);
-// std::cout << "induced_edges written" << std::endl;
+  stream->Write(induced_edges);
+std::cout << "induced_edges written" << std::endl;
 
 }
 
 void HeteroSubgraph::Load(dmlc::Stream * stream) {
-  auto hg_ptr = std::dynamic_pointer_cast<HeteroGraph>(graph);
-std::cout << "pointer conversion finish" << std::endl;
-  // hg_ptr->Load(stream);
+  graph = std::make_shared<HeteroGraph>(stream);  
+  // graph = hg_ptr;
   stream->Read(&induced_vertices);
   stream->Read(&induced_edges);
 }
 
+HeteroGraph::HeteroGraph(dmlc::Stream *stream) {
+  this->Load(stream);
+}
 
 }  // namespace dgl

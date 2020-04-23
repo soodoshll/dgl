@@ -17,14 +17,14 @@ class BufferStream : public dmlc::SeekStream {
 
   const char* GetBuffer(void) const;
   void Reset(size_t init_capacity = 256);
-  network::Message ToMessage() const {
-    return network::Message(buffer, ptr - buffer);
-  }
+  network::Message ToMessage();
+  
  private:
   size_t capacity;
   char *buffer;
   char *ptr;
   void Resize(const size_t new_size);
+  bool converted = false;
 };
 
 class InputBufferStream : public dmlc::SeekStream {

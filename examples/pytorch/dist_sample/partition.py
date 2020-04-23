@@ -40,7 +40,7 @@ def main():
             part = server_parts[part_id]
             part.ndata['part_id'] = F.gather_row(node_parts, part.ndata[dgl.NID])
     elif args.method == 'random':
-        node_parts = np.random.choice(num_parts, g.number_of_nodes())
+        node_parts = F.tensor(np.random.choice(num_parts, g.number_of_nodes()))
         server_parts = dgl.transform.partition_graph_with_halo(g, node_parts, 1)
         for part_id in server_parts:
             part = server_parts[part_id]
@@ -75,7 +75,8 @@ def main():
 
     # To save partition book 
     assert np.all(global2local >= 0)
-    np.savez(output+'/part_book.npz', num_parts = num_parts, part_id = node_parts, global2local = global2local)
+    np.savez(output+'/part_book.npz', num_nodes = g.number_of_nodes(), 
+            num_parts = num_parts, part_id = node_parts, global2local = global2local)
     
 
     num_cuts = g.number_of_edges() - tot_num_inner_edges

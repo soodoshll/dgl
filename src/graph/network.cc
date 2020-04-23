@@ -19,6 +19,8 @@
 #include "./network/msg_queue.h"
 #include "./network/common.h"
 
+#include "./heterograph.h"
+
 using dgl::network::StringPrintf;
 using namespace dgl::runtime;
 
@@ -960,6 +962,65 @@ std::cout << "Seed data conversion finish" << std::endl;
     _SendDSMsg(sender, recv_id, ds_msg);
 }
 
+using HeterpSubGraphPtr = std::shared_ptr<HeteroSubgraph>;
+
+
+HeterpSubGraphPtr HeteroSubgraphUnion(const std::vector<HeterpSubGraphPtr> &components) {
+// std::cout << "start union" << std::endl;
+  HeteroGraphPtr graph = components[0]->graph;
+// std::cout << "get the first graph" << std::endl;
+  GraphPtr meta_graph = graph->meta_graph();
+// std::cout << "get meta graph" << std::endl;
+  // concat COO
+  std::vector<HeteroGraphPtr> rel_graphs;
+  // std::vector<IdArray> induced_vetices; // this is not important
+  std::vector<std::vector<int64_t>> induced_edges(graph->NumEdgeTypes()); 
+  for (dgl_type_t etype = 0; etype < graph->NumEdgeTypes(); etype++){
+    auto rel = components[0]->graph->GetRelationGraph(etype);
+// std::cout << "get relation" << std::endl;
+    int64_t coo_size = 0;
+    for (const auto &comp : components) {
+      coo_size += comp->graph->GetCOOMatrix(etype).col->shape[0];
+    }
+    std::vector<int64_t> rarr;
+    std::vector<int64_t> carr;
+    rarr.reserve(coo_size); carr.reserve(coo_size);
+    IdArray darr = aten::NullArray();
+    auto nrows = rel->GetCOOMatrix(0).num_rows, ncols = rel->GetCOOMatrix(0).num_cols;
+// std::cout << "before concat" << std::endl;
+    auto &ie = induced_edges[etype];
+    for (const auto &comp : components) {
+      const auto &comp_coo = comp->graph->GetCOOMatrix(etype);
+      auto v_row = comp_coo.row.ToVector<int64_t>();
+      auto v_col = comp_coo.col.ToVector<int64_t>();
+
+      rarr.insert(rarr.end(), v_row.begin(), v_row.end());
+      carr.insert(carr.end(), v_col.begin(), v_col.end());
+
+      const auto &comp_edges = comp->induced_edges[etype].ToVector<int64_t>();
+      ie.insert(ie.begin(), comp_edges.begin(), comp_edges.end());
+    } 
+// std::cout << "concat finished" << std::endl;
+    rel_graphs.emplace_back(UnitGraph::CreateFromCOO(
+      rel->NumVertexTypes(),
+      nrows,
+      ncols,
+      aten::VecToIdArray(rarr),
+      aten::VecToIdArray(carr)));
+  }
+// std::cout << "coo combined" << std::endl;
+  HeteroGraphPtr union_graph = std::make_shared<HeteroGraph>(
+    meta_graph,
+    rel_graphs
+  );
+  auto union_subgraph = std::make_shared<HeteroSubgraph>();
+  union_subgraph->graph = union_graph;
+  for (dgl_type_t etype = 0; etype < graph->NumEdgeTypes(); etype++)
+    union_subgraph->induced_edges.push_back(aten::VecToIdArray(induced_edges[etype]));
+  // union_subgraph->induced_vertices = std::move(induced_vetices);
+  return union_subgraph;
+}
+
 // For Distributed sampling
 DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
 .set_body([] (DGLArgs args, DGLRetValue* rv) {
@@ -990,15 +1051,34 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
   }
 
   // TODO: Use OpenMP to optimize
+  size_t req_tot = 0;
   for (size_t i = 0 ; i < num_parts; i++)
     if (!part_req[i].empty()) {
       _SendSampleRequest(sender, i, part_req[i], fanout, client_id);
-      Message *msg = new Message;
-      receiver->RecvFrom(msg, i);
-      delete msg;
-std::cout << "response received" << std::endl;
+      ++req_tot;
     }
   
+  std::vector<HeterpSubGraphPtr> responses;
+  responses.reserve(req_tot);
+  for (size_t i = 0 ; i < req_tot ; ++i) {
+      Message msg;
+      int send_id;
+      CHECK_EQ(receiver->Recv(&msg, &send_id), REMOVE_SUCCESS);
+      // uint64_t a = *reinterpret_cast<uint64_t *>(msg.data);
+// std::cout << "response received. size:" << msg.size << " magic:" << a <<std::endl;
+      InputBufferStream is(msg.data);
+      auto subgraph = std::make_shared<HeteroSubgraph>();
+      subgraph->Load(&is);
+      responses.emplace_back(subgraph);
+// std::cout << "subgraph built " << send_id << " #vertex:" << subgraph->graph->NumVertices(0) <<std::endl;
+// std::cout << "#vertex:" << responses[0]->graph-> NumVertices(0) <<std::endl;
+}
+// std::cout << "#vertex:" << responses[0]->graph-> NumVertices(0) <<std::endl;
+  // union
+  auto union_graph = HeteroSubgraphUnion(responses);
+  // std::cout << "union #vertices " << union_graph->graph->NumVertices(0) << " #edges:"
+            // << union_graph->graph->NumEdges(0) << std::endl;
+  *rv = HeteroSubgraphRef(union_graph);
   delete []part_req;
 });
 
@@ -1008,9 +1088,15 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
   network::Receiver* receiver = static_cast<network::Receiver*>(rchandle);
   CommunicatorHandle schandle = args[1];
   network::Sender* sender = static_cast<network::Sender*>(schandle);
-
-  HeteroGraphRef hg = args[2];
-  const auto& prob = ListValueToVector<FloatArray>(args[3]);
+  int64_t num_vertices = args[2];
+  IdArray global2local = args[3];
+  auto g2l = static_cast<int64_t *>(global2local->data);
+  IdArray local2global = args[4];
+  auto l2g = static_cast<int64_t *>(local2global->data);
+  IdArray edge_local2global = args[5];
+  auto e_l2g = static_cast<int64_t *>(edge_local2global->data);
+  HeteroGraphRef hg = args[6];
+  const auto& prob = ListValueToVector<FloatArray>(args[7]);
 
   while (true) {
     DistSampleMsg *msg = _RecvDSMsg(receiver);
@@ -1025,26 +1111,70 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
 
     std::vector<IdArray> nodes;
     nodes.emplace_back(msg->seed);
+    
+    // convert global id into local id
+    for (auto &node_arr : nodes) {
+      int64_t * node_ptr = static_cast<int64_t *>(node_arr->data);
+      for (int64_t i = 0; i < node_arr->shape[0]; ++i)
+        node_ptr[i] = g2l[node_ptr[i]];
+    }
 
     std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
     *subg = dgl::sampling::SampleNeighbors(
       hg.sptr(), nodes, fanouts, EdgeDir::kIn, prob, false
     );
-    std::cout << "sampling finished" << std::endl;
-    std::cout << subg->induced_vertices.size() << std::endl;
-    for (const auto &n : subg->induced_vertices) {
-    //   // for (const auto &v : n.ToVector<int64_t>()){
-    //   //   std::cout << v << ' ';
-    //   // }
-      std::cout << "induced_vertices: " << std::endl;
+    // std::cout << subg->induced_vertices.size() << std::endl;
+
+    // convert local id to global id
+    std::vector<HeteroGraphPtr> rel_graphs;
+    for (dgl_type_t etype = 0; etype < subg->graph->NumEdgeTypes(); ++etype) {
+      auto coo = subg->graph->GetCOOMatrix(etype);
+      auto row_ptr = static_cast<int64_t *>(coo.row->data);
+      auto col_ptr = static_cast<int64_t *>(coo.col->data);
+      for (int64_t i = 0; i < coo.row->shape[0]; i++) {
+        row_ptr[i] = l2g[row_ptr[i]];
+        col_ptr[i] = l2g[col_ptr[i]];
+      }
+      auto rel = std::dynamic_pointer_cast<HeteroGraph>(subg->graph);
+      rel_graphs.emplace_back(UnitGraph::CreateFromCOO(
+        rel->NumVertexTypes(),
+        num_vertices,
+        num_vertices,
+        coo.row,
+        coo.col
+      ));
+    }
+    
+    for (auto &ie : subg->induced_edges) {
+      int64_t *edge_ptr = static_cast<int64_t *>(ie->data);
+      for (int64_t i; i < ie->shape[0]; ++i)
+        edge_ptr[i] = e_l2g[edge_ptr[i]];
     }
 
-    BufferStream bs;
-    subg->Save(&bs);
-    sender->Send(bs.ToMessage(), msg->rank);
-    std::cout << "subgraph sent back" << std::endl;
+    auto relabled_graph = std::make_shared<HeteroGraph>(
+      subg->graph->meta_graph(),
+      rel_graphs
+    );
 
-    delete msg;
+    auto relabled_subgraph = std::make_shared<HeteroSubgraph>();
+    relabled_subgraph->graph = relabled_graph;
+    relabled_subgraph->induced_edges = subg->induced_edges;
+    // for (dgl_type_t etype = 0; etype < subg->graph->NumEdgeTypes; ++etype) {
+    //   std::vector<int64_t> relabled_ie;
+    //   const auto &ie_ptr = static_cast<int64_t *>(subg->induced_edges[etype]->data);
+    //   for (int64_t i = 0 ; i < subg->induced_edges[etype]->shape[0] ; ++i)
+    //     relabled_ie.emplace_back(e_l2g[ie_ptr[i]]);
+    //   relabled_subgraph->induced_edges.emplace_back(aten::VecToIdArray(relabled_ie));
+    // }
+    relabled_subgraph->induced_vertices = std::vector<IdArray>();
+    BufferStream bs;
+    relabled_subgraph->Save(&bs);
+    Message response = bs.ToMessage();
+    sender->Send(response, msg->rank);
+    uint64_t a = *reinterpret_cast<uint64_t *>(response.data);
+    std::cout << "subgraph sent back, size:" << response.size << " magic:" << a << std::endl;
+
+    // delete msg;
   }
 });
 

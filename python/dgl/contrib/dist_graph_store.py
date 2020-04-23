@@ -4,6 +4,9 @@ import dgl.backend as F
 from dgl.data.utils import load_graphs
 from .._ffi.function import _init_api
 from .. import utils
+from ..base import DGLError, EID
+from ..heterograph import DGLHeteroGraph
+
 
 from ..network import _create_sender, _create_receiver
 from ..network import _finalize_sender, _finalize_receiver
@@ -24,8 +27,11 @@ class DistGraphStoreServer(object):
         self._local_g.edata['_TYPE'] = F.zeros(self._local_g.number_of_edges(), dtype=F.int64, ctx=F.cpu())
         self._local_g = dgl.to_hetero(self._local_g, ["default"], ["default"])
         self._part_book = np.load(partition_book)
-        self._global2local = self._part_book['global2local']
-
+        self._num_nodes = int(self._part_book["num_nodes"])
+        self._global2local = F.zerocopy_to_dgl_ndarray(F.tensor(self._part_book['global2local']))
+        self._local2global = F.zerocopy_to_dgl_ndarray(self._local_g.nodes["default"].data[dgl.NID])
+        self._e_local2global = F.zerocopy_to_dgl_ndarray(self._local_g.edges["default"].data[dgl.EID])
+        
         self._ip = self._server_namebook[self._server_id][0]
         self._port = self._server_namebook[self._server_id][1]
 
@@ -33,6 +39,9 @@ class DistGraphStoreServer(object):
         self._sender = _create_sender(net_type, queue_size)
         self._receiver = _create_receiver(net_type, queue_size)
         self._client_namebook = {}
+
+        print(type(self._global2local), type(self._local2global), type(self._e_local2global))
+
 
 
     def start(self):
@@ -48,7 +57,6 @@ class DistGraphStoreServer(object):
         addr_list.sort()
         for ID in range(len(addr_list)):
             self._client_namebook[ID] = addr_list[ID]
-
         _network_wait()
 
         for ID, addr in self._client_namebook.items():
@@ -72,12 +80,11 @@ class DistGraphStoreServer(object):
         print('Distributed Sampling service %d start successfully! Listen for request ...' % self._server_id)
         prob_arrays = [utils.nd.array([], ctx=utils.nd.cpu())]
         # Service loop
-        _CAPI_RemoteSamplingServerLoop(self._receiver, self._sender, self._local_g._graph, prob_arrays)
-
-
-    def neighbor_sample(self, seed, fanout):
-        # This part should be done in C++
-        pass
+        _CAPI_RemoteSamplingServerLoop(
+            self._receiver, self._sender, self._num_nodes,
+            self._global2local, self._local2global, self._e_local2global, 
+            self._local_g._graph, prob_arrays
+            )
 
 class DistGraphStore(object):
     def __init__(self, server_namebook, partition_book, queue_size=2*1024*1024*1024, net_type='socket'):
@@ -93,16 +100,25 @@ class DistGraphStore(object):
         self._sender = _create_sender(net_type, queue_size)
         self._receiver = _create_receiver(net_type, queue_size)
 
+    def num_parts(self):
+        return self._num_parts
+    
+    def part_id(self, nid):
+        return self._part_book['part_id'][nid]
 
     def neighbor_sample(self, seed, fanout):
-        # This part should be done in C++
-        _CAPI_RemoteSamplingReqeust(self._receiver, 
+        subgidx = _CAPI_RemoteSamplingReqeust(self._receiver, 
                                     self._sender,
                                     self._client_id,
                                     self._num_parts,
                                     self._part_id, 
                                     F.zerocopy_to_dgl_ndarray(seed), 
                                     fanout)
+        induced_edges = subgidx.induced_edges
+        ret = DGLHeteroGraph(subgidx.graph, ["default"], ["default"])
+        for i, etype in enumerate(ret.canonical_etypes):
+            ret.edges[etype].data[EID] = induced_edges[i].tousertensor()
+        return ret
     
     def connect(self):
         for ID, addr in self._server_namebook.items():
