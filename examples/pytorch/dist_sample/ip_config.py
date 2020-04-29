@@ -1,7 +1,5 @@
-port = 6320
+port = 4354
+server_num = 4
 server_namebook = {
-    0 : ['127.0.0.1', str(port)],
-    1 : ['127.0.0.1', str(port+1)],
-    2 : ['127.0.0.1', str(port+2)],
-    3 : ['127.0.0.1', str(port+3)]
+    i : ['127.0.0.1', str(port+i)] for i in range(server_num)
 }

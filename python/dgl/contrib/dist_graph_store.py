@@ -28,19 +28,29 @@ class DistGraphStoreServer(object):
         self._local_g = dgl.to_hetero(self._local_g, ["default"], ["default"])
         self._part_book = np.load(partition_book)
         self._num_nodes = int(self._part_book["num_nodes"])
-        self._global2local = F.zerocopy_to_dgl_ndarray(F.tensor(self._part_book['global2local']))
+
+        # update the global2local of halo nodes
+        self._global2local = self._part_book['global2local']
+        print(self._local_g.number_of_nodes("default"))
+        for nid in range(self._local_g.number_of_nodes("default")):
+            gid = int(self._local_g.nodes["default"].data[dgl.NID][nid])
+            self._global2local[gid] = nid
+        self._global2local = F.zerocopy_to_dgl_ndarray(F.tensor(self._global2local))
+
         self._local2global = F.zerocopy_to_dgl_ndarray(self._local_g.nodes["default"].data[dgl.NID])
         self._e_local2global = F.zerocopy_to_dgl_ndarray(self._local_g.edges["default"].data[dgl.EID])
         
         self._ip = self._server_namebook[self._server_id][0]
         self._port = self._server_namebook[self._server_id][1]
 
+        print("start server:", self._server_id, "at", self._ip, ":", self._port)
+
         self._num_clients = num_clients
         self._sender = _create_sender(net_type, queue_size)
         self._receiver = _create_receiver(net_type, queue_size)
         self._client_namebook = {}
 
-        print(type(self._global2local), type(self._local2global), type(self._e_local2global))
+        # print(type(self._global2local), type(self._local2global), type(self._e_local2global))
 
 
 
@@ -81,6 +91,7 @@ class DistGraphStoreServer(object):
         prob_arrays = [utils.nd.array([], ctx=utils.nd.cpu())]
         # Service loop
         _CAPI_RemoteSamplingServerLoop(
+            self._num_clients, 
             self._receiver, self._sender, self._num_nodes,
             self._global2local, self._local2global, self._e_local2global, 
             self._local_g._graph, prob_arrays
@@ -104,7 +115,7 @@ class DistGraphStore(object):
         return self._num_parts
     
     def part_id(self, nid):
-        return self._part_book['part_id'][nid]
+        return int(self._part_book['part_id'][nid])
 
     def neighbor_sample(self, seed, fanout):
         subgidx = _CAPI_RemoteSamplingReqeust(self._receiver, 

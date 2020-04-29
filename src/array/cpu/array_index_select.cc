@@ -18,6 +18,7 @@ NDArray IndexSelect(NDArray array, IdArray index) {
   const int64_t len = index->shape[0];
   NDArray ret = NDArray::Empty({len}, array->dtype, array->ctx);
   DType* ret_data = static_cast<DType*>(ret->data);
+  #pragma omp parallel for
   for (int64_t i = 0; i < len; ++i) {
     CHECK_LT(idx_data[i], arr_len) << "Index out of range.";
     ret_data[i] = array_data[idx_data[i]];

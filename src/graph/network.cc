@@ -11,8 +11,10 @@
 #include <dgl/immutable_graph.h>
 #include <dgl/nodeflow.h>
 #include <dgl/sampling/neighbor.h>
+#include <dmlc/omp.h>
 
 #include <unordered_map>
+#include <thread>
 
 #include "./network/communicator.h"
 #include "./network/socket_communicator.h"
@@ -764,12 +766,14 @@ DGL_REGISTER_GLOBAL("network._CAPI_SenderSendDSMsg")
     _SendDSMsg(sender, recv_id, ds_msg);
   });
 
-DistSampleMsg *_RecvDSMsg(network::Receiver* receiver){
+DistSampleMsg *_RecvDSMsg(network::Receiver* receiver, int send_id = -1){
     DistSampleMsg *ds_msg = new DistSampleMsg();
     // Recv kv_Msg
     Message recv_ds_msg;
-    int send_id;
-    CHECK_EQ(receiver->Recv(&recv_ds_msg, &send_id), REMOVE_SUCCESS);
+    if (send_id  >= 0)
+      receiver->RecvFrom(&recv_ds_msg, send_id);
+    else
+      CHECK_EQ(receiver->Recv(&recv_ds_msg, &send_id), REMOVE_SUCCESS);
     ds_msg->Deserialize(recv_ds_msg.data, recv_ds_msg.size);
     recv_ds_msg.deallocator(&recv_ds_msg);
     if (ds_msg->msg_type == kFinalMsg ||
@@ -955,52 +959,55 @@ void _SendSampleRequest(network::Sender* sender,const size_t recv_id,
     ds_msg.rank = client_id;
     ds_msg.fanout = fanout;
     ds_msg.name = " ";
-std::cout << "target:" << recv_id << " rank:" << client_id << " fanout:" << fanout << " name:" << ds_msg.name << std::endl; 
     // Is this conversion necessary?
     ds_msg.seed = NDArray::FromVector(seeds);
-std::cout << "Seed data conversion finish" << std::endl;
     _SendDSMsg(sender, recv_id, ds_msg);
 }
 
 using HeterpSubGraphPtr = std::shared_ptr<HeteroSubgraph>;
 
+#include <chrono>
+static double t_union = 0;
+static double t_req_wait = 0;
+static double t_g2l = 0;
+static double t_sample = 0;
+static double t_l2g = 0;
+static double t_rebuild = 0;
+static double t_serial = 0;
 
 HeterpSubGraphPtr HeteroSubgraphUnion(const std::vector<HeterpSubGraphPtr> &components) {
-// std::cout << "start union" << std::endl;
+  auto start = std::chrono::steady_clock::now();
   HeteroGraphPtr graph = components[0]->graph;
-// std::cout << "get the first graph" << std::endl;
   GraphPtr meta_graph = graph->meta_graph();
-// std::cout << "get meta graph" << std::endl;
   // concat COO
   std::vector<HeteroGraphPtr> rel_graphs;
-  // std::vector<IdArray> induced_vetices; // this is not important
   std::vector<std::vector<int64_t>> induced_edges(graph->NumEdgeTypes()); 
   for (dgl_type_t etype = 0; etype < graph->NumEdgeTypes(); etype++){
     auto rel = components[0]->graph->GetRelationGraph(etype);
-// std::cout << "get relation" << std::endl;
     int64_t coo_size = 0;
+    std::vector<int64_t> coo_size_list;
     for (const auto &comp : components) {
       coo_size += comp->graph->GetCOOMatrix(etype).col->shape[0];
+      coo_size_list.push_back(coo_size);
     }
     std::vector<int64_t> rarr;
     std::vector<int64_t> carr;
     rarr.reserve(coo_size); carr.reserve(coo_size);
     IdArray darr = aten::NullArray();
     auto nrows = rel->GetCOOMatrix(0).num_rows, ncols = rel->GetCOOMatrix(0).num_cols;
-// std::cout << "before concat" << std::endl;
     auto &ie = induced_edges[etype];
     for (const auto &comp : components) {
       const auto &comp_coo = comp->graph->GetCOOMatrix(etype);
-      auto v_row = comp_coo.row.ToVector<int64_t>();
-      auto v_col = comp_coo.col.ToVector<int64_t>();
+      const int64_t *v_row = static_cast<const int64_t *>(comp_coo.row->data);
+      const int64_t *v_col = static_cast<const int64_t *>(comp_coo.col->data);
 
-      rarr.insert(rarr.end(), v_row.begin(), v_row.end());
-      carr.insert(carr.end(), v_col.begin(), v_col.end());
+      rarr.insert(rarr.end(), v_row, v_row + comp_coo.row->shape[0]);
+      carr.insert(carr.end(), v_col, v_col + comp_coo.col->shape[0]);
 
-      const auto &comp_edges = comp->induced_edges[etype].ToVector<int64_t>();
-      ie.insert(ie.begin(), comp_edges.begin(), comp_edges.end());
+      const auto &ie_cur_type = comp->induced_edges[etype];
+      auto comp_edges = static_cast<const int64_t *>(ie_cur_type->data);
+      ie.insert(ie.begin(), comp_edges, comp_edges + ie_cur_type->shape[0]);
     } 
-// std::cout << "concat finished" << std::endl;
     rel_graphs.emplace_back(UnitGraph::CreateFromCOO(
       rel->NumVertexTypes(),
       nrows,
@@ -1008,7 +1015,6 @@ HeterpSubGraphPtr HeteroSubgraphUnion(const std::vector<HeterpSubGraphPtr> &comp
       aten::VecToIdArray(rarr),
       aten::VecToIdArray(carr)));
   }
-// std::cout << "coo combined" << std::endl;
   HeteroGraphPtr union_graph = std::make_shared<HeteroGraph>(
     meta_graph,
     rel_graphs
@@ -1017,10 +1023,14 @@ HeterpSubGraphPtr HeteroSubgraphUnion(const std::vector<HeterpSubGraphPtr> &comp
   union_subgraph->graph = union_graph;
   for (dgl_type_t etype = 0; etype < graph->NumEdgeTypes(); etype++)
     union_subgraph->induced_edges.push_back(aten::VecToIdArray(induced_edges[etype]));
-  // union_subgraph->induced_vertices = std::move(induced_vetices);
+  auto end = std::chrono::steady_clock::now();
+  std::chrono::duration<double> t = std::chrono::duration<double>(end - start);
+  t_union += t.count();
   return union_subgraph;
 }
 
+static double t_remote = 0;
+static double t_split = 0;
 // For Distributed sampling
 DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
 .set_body([] (DGLArgs args, DGLRetValue* rv) {
@@ -1036,7 +1046,7 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
   int64_t fanout = args[6];
   
   std::vector<dgl_id_t> *part_req = new std::vector<dgl_id_t>[num_parts];
-
+  auto start = std::chrono::steady_clock::now();
   const int64_t seed_size = seed_nodes->shape[0];
   const dgl_id_t *seed_arr = static_cast<dgl_id_t *>(seed_nodes->data);
   const int64_t *part_id_arr = static_cast<int64_t *>(part_ids->data);
@@ -1045,137 +1055,177 @@ DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingReqeust")
     const int64_t part_id = part_id_arr[node_id];
     part_req[part_id].emplace_back(node_id);
   }
-  
-  for (size_t i = 0 ; i < num_parts; i++) {
-    std::cout << "#" << i << " : " << part_req[i].size() << std::endl;
-  }
+  auto end = std::chrono::steady_clock::now();
+  std::chrono::duration<double> t = std::chrono::duration<double>(end - start);
+  t_split += t.count();
 
   // TODO: Use OpenMP to optimize
   size_t req_tot = 0;
+  start = std::chrono::steady_clock::now();
   for (size_t i = 0 ; i < num_parts; i++)
     if (!part_req[i].empty()) {
       _SendSampleRequest(sender, i, part_req[i], fanout, client_id);
       ++req_tot;
     }
-  
+
   std::vector<HeterpSubGraphPtr> responses;
   responses.reserve(req_tot);
   for (size_t i = 0 ; i < req_tot ; ++i) {
       Message msg;
       int send_id;
       CHECK_EQ(receiver->Recv(&msg, &send_id), REMOVE_SUCCESS);
-      // uint64_t a = *reinterpret_cast<uint64_t *>(msg.data);
-// std::cout << "response received. size:" << msg.size << " magic:" << a <<std::endl;
       InputBufferStream is(msg.data);
       auto subgraph = std::make_shared<HeteroSubgraph>();
       subgraph->Load(&is);
       responses.emplace_back(subgraph);
-// std::cout << "subgraph built " << send_id << " #vertex:" << subgraph->graph->NumVertices(0) <<std::endl;
-// std::cout << "#vertex:" << responses[0]->graph-> NumVertices(0) <<std::endl;
-}
-// std::cout << "#vertex:" << responses[0]->graph-> NumVertices(0) <<std::endl;
+  }
+
+  end = std::chrono::steady_clock::now();
+  t = std::chrono::duration<double>(end - start);
+  t_req_wait += t.count();
+  
+  start = std::chrono::steady_clock::now();
   // union
   auto union_graph = HeteroSubgraphUnion(responses);
-  // std::cout << "union #vertices " << union_graph->graph->NumVertices(0) << " #edges:"
-            // << union_graph->graph->NumEdges(0) << std::endl;
+  end = std::chrono::steady_clock::now();
+  t = std::chrono::duration<double>(end - start);
+  t_union += t.count();
+
   *rv = HeteroSubgraphRef(union_graph);
+  std::cout << "t_split: " << t_split << " | t_wait: " << t_req_wait << " | t_union: " << t_union << std::endl; 
+
   delete []part_req;
 });
 
-DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-  CommunicatorHandle rchandle = args[0];
-  network::Receiver* receiver = static_cast<network::Receiver*>(rchandle);
-  CommunicatorHandle schandle = args[1];
-  network::Sender* sender = static_cast<network::Sender*>(schandle);
-  int64_t num_vertices = args[2];
-  IdArray global2local = args[3];
-  auto g2l = static_cast<int64_t *>(global2local->data);
-  IdArray local2global = args[4];
-  auto l2g = static_cast<int64_t *>(local2global->data);
-  IdArray edge_local2global = args[5];
-  auto e_l2g = static_cast<int64_t *>(edge_local2global->data);
-  HeteroGraphRef hg = args[6];
-  const auto& prob = ListValueToVector<FloatArray>(args[7]);
 
+static double t_l2g1 = 0;
+static double t_l2g2 = 0;
+
+void ServerLoop(
+  size_t thread_id,
+  network::Receiver* receiver,
+  network::Sender* sender,
+  int64_t num_vertices,
+  IdArray g2l,
+  IdArray l2g,
+  IdArray e_l2g,
+  HeteroGraphRef hg,
+  const std::vector<FloatArray> &prob
+) {
   while (true) {
-    DistSampleMsg *msg = _RecvDSMsg(receiver);
+    DistSampleMsg *msg;
+    msg = _RecvDSMsg(receiver, thread_id);
     if (msg->msg_type == kFinalMsg) {
       std::cout << "Service stops." << std::endl;
       return ;
     }
-    std::cout << "new message received" << std::endl;
 
     std::vector<int64_t> fanouts;
     fanouts.emplace_back(msg->fanout);
 
     std::vector<IdArray> nodes;
-    nodes.emplace_back(msg->seed);
-    
-    // convert global id into local id
-    for (auto &node_arr : nodes) {
-      int64_t * node_ptr = static_cast<int64_t *>(node_arr->data);
-      for (int64_t i = 0; i < node_arr->shape[0]; ++i)
-        node_ptr[i] = g2l[node_ptr[i]];
-    }
 
+    auto start = std::chrono::steady_clock::now();
+    // convert global id into local id
+    nodes.emplace_back(aten::IndexSelect(g2l, msg->seed));
+
+    auto end = std::chrono::steady_clock::now();
+    std::chrono::duration<double> t = std::chrono::duration<double>(end - start);
+    t_g2l += t.count();
+
+    start = std::chrono::steady_clock::now();
     std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
     *subg = dgl::sampling::SampleNeighbors(
-      hg.sptr(), nodes, fanouts, EdgeDir::kIn, prob, false
+      hg.sptr(), nodes, fanouts, EdgeDir::kIn, prob, true
     );
-    // std::cout << subg->induced_vertices.size() << std::endl;
+    end = std::chrono::steady_clock::now();
+    t = std::chrono::duration<double>(end - start);
+    t_sample += t.count();
+
+    start = std::chrono::steady_clock::now();
 
     // convert local id to global id
     std::vector<HeteroGraphPtr> rel_graphs;
     for (dgl_type_t etype = 0; etype < subg->graph->NumEdgeTypes(); ++etype) {
       auto coo = subg->graph->GetCOOMatrix(etype);
-      auto row_ptr = static_cast<int64_t *>(coo.row->data);
-      auto col_ptr = static_cast<int64_t *>(coo.col->data);
-      for (int64_t i = 0; i < coo.row->shape[0]; i++) {
-        row_ptr[i] = l2g[row_ptr[i]];
-        col_ptr[i] = l2g[col_ptr[i]];
-      }
+      // #pragma parallel for
+      IdArray row = aten::IndexSelect(l2g, coo.row);
+      IdArray col = aten::IndexSelect(l2g, coo.col);
+
       auto rel = std::dynamic_pointer_cast<HeteroGraph>(subg->graph);
       rel_graphs.emplace_back(UnitGraph::CreateFromCOO(
         rel->NumVertexTypes(),
         num_vertices,
         num_vertices,
-        coo.row,
-        coo.col
+        row,
+        col
       ));
     }
-    
+    end = std::chrono::steady_clock::now();
+    t = std::chrono::duration<double>(end - start);
+    t_l2g1 += t.count();
+
+    std::vector<IdArray> induced_edges;
     for (auto &ie : subg->induced_edges) {
-      int64_t *edge_ptr = static_cast<int64_t *>(ie->data);
-      for (int64_t i; i < ie->shape[0]; ++i)
-        edge_ptr[i] = e_l2g[edge_ptr[i]];
+      induced_edges.emplace_back(aten::IndexSelect(e_l2g, ie));
     }
+
+    end = std::chrono::steady_clock::now();
+    t = std::chrono::duration<double>(end - start);
+    t_l2g2 += t.count();
 
     auto relabled_graph = std::make_shared<HeteroGraph>(
       subg->graph->meta_graph(),
       rel_graphs
     );
 
+    end = std::chrono::steady_clock::now();
+    t = std::chrono::duration<double>(end - start);
+    t_l2g += t.count();
+
+    start = std::chrono::steady_clock::now();
     auto relabled_subgraph = std::make_shared<HeteroSubgraph>();
     relabled_subgraph->graph = relabled_graph;
-    relabled_subgraph->induced_edges = subg->induced_edges;
-    // for (dgl_type_t etype = 0; etype < subg->graph->NumEdgeTypes; ++etype) {
-    //   std::vector<int64_t> relabled_ie;
-    //   const auto &ie_ptr = static_cast<int64_t *>(subg->induced_edges[etype]->data);
-    //   for (int64_t i = 0 ; i < subg->induced_edges[etype]->shape[0] ; ++i)
-    //     relabled_ie.emplace_back(e_l2g[ie_ptr[i]]);
-    //   relabled_subgraph->induced_edges.emplace_back(aten::VecToIdArray(relabled_ie));
-    // }
+    relabled_subgraph->induced_edges = induced_edges;
     relabled_subgraph->induced_vertices = std::vector<IdArray>();
     BufferStream bs;
     relabled_subgraph->Save(&bs);
+    end = std::chrono::steady_clock::now();
+    t = std::chrono::duration<double>(end - start);
+    t_serial += t.count();
     Message response = bs.ToMessage();
     sender->Send(response, msg->rank);
-    uint64_t a = *reinterpret_cast<uint64_t *>(response.data);
-    std::cout << "subgraph sent back, size:" << response.size << " magic:" << a << std::endl;
+    // uint64_t a = *reinterpret_cast<uint64_t *>(response.data);
+    // std::cout << "subgraph sent back, size:" << response.size << " magic:" << a << std::endl;
 
-    // delete msg;
+    std::cout << "## used time ##" << std::endl;
+    std::cout << "g2l: " << t_g2l << " | sample: " << t_sample << " | l2g: " << t_l2g  
+              << " (stage1: "<<t_l2g1 << ", stage2:" << t_l2g2 << ")"
+              << " | serialization: " << t_serial << std::endl;
   }
+}
+
+DGL_REGISTER_GLOBAL("network._CAPI_RemoteSamplingServerLoop")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+  int64_t num_client = args[0];
+  CommunicatorHandle rchandle = args[1];
+  network::Receiver* receiver = static_cast<network::Receiver*>(rchandle);
+  CommunicatorHandle schandle = args[2];
+  network::Sender* sender = static_cast<network::Sender*>(schandle);
+  int64_t num_vertices = args[3];
+  IdArray global2local = args[4];
+  IdArray local2global = args[5];
+  IdArray edge_local2global = args[6];
+  HeteroGraphRef hg = args[7];
+  const auto& prob = ListValueToVector<FloatArray>(args[8]);
+
+  std::vector<std::thread> threads;
+  for (size_t tid = 0 ; tid < num_client ; ++tid){
+    threads.emplace_back(ServerLoop, tid, receiver, sender, num_vertices, global2local, local2global, edge_local2global, hg, prob);
+  }
+
+  for (auto &thread : threads)
+    thread.join();
 });
 
 void DistSampleMsg::Save(dmlc::Stream *stream) const {

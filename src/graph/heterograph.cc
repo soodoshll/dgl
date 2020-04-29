@@ -366,13 +366,13 @@ GraphPtr HeteroGraph::AsImmutableGraph() const {
 
 void HeteroSubgraph::Save(dmlc::Stream * stream) const {
   auto hg_ptr = std::dynamic_pointer_cast<HeteroGraph>(graph);
-std::cout << "pointer conversion finish" << std::endl;
+// std::cout << "pointer conversion finish" << std::endl;
   hg_ptr->Save(stream);
-std::cout << "graph written" << std::endl;
+// std::cout << "graph written" << std::endl;
   stream->Write(induced_vertices);
-std::cout << "induced_vertices written" << std::endl;
+// std::cout << "induced_vertices written" << std::endl;
   stream->Write(induced_edges);
-std::cout << "induced_edges written" << std::endl;
+// std::cout << "induced_edges written" << std::endl;
 
 }
 
