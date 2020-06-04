@@ -145,18 +145,23 @@ def evaluate(model, g, inputs, labels, val_mask, batch_size, device):
     model.train()
     return compute_acc(pred[val_mask], labels[val_mask])
 
+load_time = 0
 def load_subtensor(g, labels, seeds, input_nodes, dev_id):
     """
     Copys features and labels of a set of nodes onto GPU.
     """
+    global load_time
+    t0 = time.time()
     batch_inputs = g.ndata['features'][input_nodes].to(dev_id)
     batch_labels = labels[seeds].to(dev_id)
+    load_time += time.time() - t0
     return batch_inputs, batch_labels
 
 #### Entry point
 
 def run(proc_id, n_gpus, args, devices, data):
     # Start up distributed training, if enabled.
+    global load_time
     dev_id = devices[proc_id]
     if n_gpus > 1:
         dist_init_method = 'tcp://{master_ip}:{master_port}'.format(
@@ -203,8 +208,8 @@ def run(proc_id, n_gpus, args, devices, data):
     # Training loop
     avg = 0
     iter_tput = []
-    # profiler = Profiler()
-    # profiler.start()
+    profiler = Profiler()
+    profiler.start()
     for epoch in range(args.num_epochs):
         tic = time.time()
 
@@ -259,12 +264,13 @@ def run(proc_id, n_gpus, args, devices, data):
                     eval_acc = evaluate(model.module, g, g.ndata['features'], labels, val_mask, args.batch_size, devices[0])
                 print('Eval Acc {:.4f}'.format(eval_acc))
 
-    # profiler.stop()
-    # print(profiler.output_text(unicode=False, color=True, show_all=True))
+    profiler.stop()
+    print(profiler.output_text(unicode=False, color=True, show_all=True))
     if n_gpus > 1:
         th.distributed.barrier()
     if proc_id == 0:
         print('Avg epoch time: {}'.format(avg / (epoch - 4)))
+        print("Time spent on loading features and labels", load_time)
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("multi-gpu training")
