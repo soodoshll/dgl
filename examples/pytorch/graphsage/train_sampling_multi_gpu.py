@@ -16,6 +16,7 @@ import tqdm
 import traceback
 
 from utils import thread_wrapped_func
+from pyinstrument import Profiler
 
 #### Neighbor sampler
 
@@ -187,7 +188,8 @@ def run(proc_id, n_gpus, args, devices, data):
         collate_fn=sampler.sample_blocks,
         shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers)
+        num_workers=args.num_workers,
+        pin_memory=True)
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
@@ -201,6 +203,8 @@ def run(proc_id, n_gpus, args, devices, data):
     # Training loop
     avg = 0
     iter_tput = []
+    # profiler = Profiler()
+    # profiler.start()
     for epoch in range(args.num_epochs):
         tic = time.time()
 
@@ -238,13 +242,14 @@ def run(proc_id, n_gpus, args, devices, data):
                 acc = compute_acc(batch_pred, batch_labels)
                 print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MiB'.format(
                     epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), th.cuda.max_memory_allocated() / 1000000))
-
+        print(step)
         if n_gpus > 1:
             th.distributed.barrier()
 
         toc = time.time()
         if proc_id == 0:
-            print('Epoch Time(s): {:.4f}'.format(toc - tic))
+            dur = toc - tic
+            print('Epoch Time(s): {:.4f} Speed (batches/sec): {:.4f}'.format(dur, step/dur))
             if epoch >= 5:
                 avg += toc - tic
             if epoch % args.eval_every == 0 and epoch != 0:
@@ -254,7 +259,8 @@ def run(proc_id, n_gpus, args, devices, data):
                     eval_acc = evaluate(model.module, g, g.ndata['features'], labels, val_mask, args.batch_size, devices[0])
                 print('Eval Acc {:.4f}'.format(eval_acc))
 
-
+    # profiler.stop()
+    # print(profiler.output_text(unicode=False, color=True, show_all=True))
     if n_gpus > 1:
         th.distributed.barrier()
     if proc_id == 0:

@@ -15,6 +15,7 @@ from functools import wraps
 from dgl.data import RedditDataset
 import tqdm
 import traceback
+from pyinstrument import Profiler
 
 #### Neighbor sampler
 
@@ -145,8 +146,8 @@ def load_subtensor(g, labels, seeds, input_nodes, device):
     """
     Copys features and labels of a set of nodes onto GPU.
     """
-    batch_inputs = g.ndata['features'][input_nodes].to(device)
-    batch_labels = labels[seeds].to(device)
+    batch_inputs = g.ndata['features'][input_nodes]#.to(device)
+    batch_labels = labels[seeds]#.to(device)
     return batch_inputs, batch_labels
 
 #### Entry point
@@ -168,7 +169,8 @@ def run(args, device, data):
         collate_fn=sampler.sample_blocks,
         shuffle=True,
         drop_last=False,
-        num_workers=args.num_workers)
+        num_workers=args.num_workers,
+        pin_memory=True)
 
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
@@ -180,6 +182,10 @@ def run(args, device, data):
     # Training loop
     avg = 0
     iter_tput = []
+
+    profiler = Profiler()
+    profiler.start()
+
     for epoch in range(args.num_epochs):
         tic = time.time()
 
@@ -217,6 +223,9 @@ def run(args, device, data):
         if epoch % args.eval_every == 0 and epoch != 0:
             eval_acc = evaluate(model, g, g.ndata['features'], labels, val_mask, args.batch_size, device)
             print('Eval Acc {:.4f}'.format(eval_acc))
+
+    profiler.stop()
+    print(profiler.output_text(unicode=False, color=True, show_all=True))
 
     print('Avg epoch time: {}'.format(avg / (epoch - 4)))
 
