@@ -220,6 +220,8 @@ class HeteroGraph : public BaseHeteroGraph {
   /*! \brief Copy the data to another context */
   static HeteroGraphPtr CopyTo(HeteroGraphPtr g, const DLContext& ctx);
 
+  void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) override;
+  
  private:
   // To create empty class
   friend class Serializer;

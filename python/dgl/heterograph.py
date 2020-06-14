@@ -202,6 +202,7 @@ class DGLHeteroGraph(object):
         """Init internal states."""
         self._graph = gidx
         self._canonical_etypes = None
+        self._tag = None
 
         # Handle node types
         if isinstance(ntypes, tuple):
@@ -4419,6 +4420,13 @@ class DGLHeteroGraph(object):
                               self._node_frames,
                               self._edge_frames)
 
+    def sort_by_tag(self, tag):
+        tag_arr = [None] * len(self.ntypes)
+        for ntype in self.ntypes:
+            tag_arr[self.get_ntype_id(ntype)] = self.nodes[ntype].data[tag]
+        num_tag = [int(F.max(t, 0)) + 1 for t in tag_arr]
+        self._graph.sort_by_tag(num_tag, tag_arr)
+    
 ############################################################
 # Internal APIs
 ############################################################
