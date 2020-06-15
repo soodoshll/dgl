@@ -4426,6 +4426,11 @@ class DGLHeteroGraph(object):
             tag_arr[self.get_ntype_id(ntype)] = self.nodes[ntype].data[tag]
         num_tag = [int(F.max(t, 0)) + 1 for t in tag_arr]
         self._graph.sort_by_tag(num_tag, tag_arr)
+
+    def set_tag(self, tag):
+        if self._tag != tag:
+            self.sort_by_tag(tag)
+            self._tag = tag
     
 ############################################################
 # Internal APIs

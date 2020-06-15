@@ -317,7 +317,7 @@ void _TestCOOTopk(bool has_data) {
   FloatArray weight = NDArray::FromVector(
       std::vector<FloatType>({.1, .0, -.1, .2, .5}));
   // -.1, .2, .1, .0, .5
-  IdArray rows = NDArray::FromVector(std::vector<Idx>({0, 3}));
+  IdArray rows = NDArray::(std::vector<Idx>({0, 3}));
 
   {
   auto rst = COORowWiseTopk(mat, rows, 1, weight, true);
