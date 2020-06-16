@@ -220,7 +220,17 @@ class HeteroGraph : public BaseHeteroGraph {
   /*! \brief Copy the data to another context */
   static HeteroGraphPtr CopyTo(HeteroGraphPtr g, const DLContext& ctx);
 
-  void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) override;
+  IdArray SortCSR_(IdArray tag, int64_t num_tags) override {
+    // LOG(FATAL) << "Not enabled for hetero graph (with multiple relations)";
+    // return aten::NullArray();
+    return relation_graphs_[0]->SortCSR_(tag, num_tags);
+  }
+
+  IdArray SortCSC_(IdArray tag, int64_t num_tags) override {
+    // LOG(FATAL) << "Not enabled for hetero graph (with multiple relations)";
+    // return aten::NullArray();
+    return relation_graphs_[0]->SortCSC_(tag, num_tags);
+  }
   
  private:
   // To create empty class

@@ -4316,7 +4316,6 @@ class DGLHeteroGraph(object):
             raise KeyError("can only request coo/csr/csr.")
         return self._graph.request_format(sparse_format, self.get_etype_id(etype))
 
-
     def to_format(self, restrict_format):
         """Return a cloned graph but stored in the given restrict format.
 
@@ -4419,19 +4418,6 @@ class DGLHeteroGraph(object):
         return DGLHeteroGraph(self._graph.asbits(32), self.ntypes, self.etypes,
                               self._node_frames,
                               self._edge_frames)
-
-    def sort_by_tag(self, tag):
-        tag_arr = [None] * len(self.ntypes)
-        for ntype in self.ntypes:
-            tag_arr[self.get_ntype_id(ntype)] = self.nodes[ntype].data[tag]
-        num_tag = [int(F.max(t, 0)) + 1 for t in tag_arr]
-        self._graph.sort_by_tag(num_tag, tag_arr)
-
-    def set_tag(self, tag):
-        if self._tag != tag:
-            self.sort_by_tag(tag)
-            self._tag = tag
-    
 ############################################################
 # Internal APIs
 ############################################################

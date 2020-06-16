@@ -266,8 +266,10 @@ class UnitGraph : public BaseHeteroGraph {
   /*! \return Save UnitGraph to stream, using CSRMatrix */
   void Save(dmlc::Stream* fs) const;
 
-  void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) override;
-  
+  IdArray SortCSR_(IdArray tag, int64_t num_tags) override;
+
+  IdArray SortCSC_(IdArray tag, int64_t num_tags) override;
+
  private:
   friend class Serializer;
   friend class HeteroGraph;
@@ -323,8 +325,6 @@ class UnitGraph : public BaseHeteroGraph {
   bool IsHypersparse() const;
 
   GraphPtr AsImmutableGraph() const override;
-
-  CSRPtr CreateSortedCSR(CSRPtr csrptr, int64_t num_tag, IdArray tag);
 
   // Graph stored in different format. We use an on-demand strategy: the format is
   // only materialized if the operation that suitable for it is invoked.

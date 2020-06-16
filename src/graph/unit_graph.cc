@@ -416,8 +416,14 @@ class UnitGraph::COO : public BaseHeteroGraph {
     fs->Write(adj_);
   }
 
-  void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) override {
-    LOG(FATAL) << "Not enabled for COO graph.";
+  IdArray SortCSR_(IdArray tag, int64_t num_tags) override {
+    LOG(FATAL) << "Not enabled for COO graph";
+    return aten::NullArray();
+  }
+
+  IdArray SortCSC_(IdArray tag, int64_t num_tags) override {
+    LOG(FATAL) << "Not enabled for COO graph";
+    return aten::NullArray();
   }
 
  private:
@@ -781,8 +787,12 @@ class UnitGraph::CSR : public BaseHeteroGraph {
     fs->Write(adj_);
   }
 
-  void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) override {
-    LOG(FATAL) << "Not enabled for CSR graph.";
+  IdArray SortCSR_(IdArray tag, int64_t num_tags) override {
+    return aten::CSRSortByTag_(&adj_, tag, num_tags);
+  }
+
+  IdArray SortCSC_(IdArray tag, int64_t num_tags) override {
+    return aten::CSRSortByTag_(&adj_, tag, num_tags);
   }
 
  private:
@@ -1514,55 +1524,13 @@ void UnitGraph::Save(dmlc::Stream* fs) const {
   }
 }
 
-UnitGraph::CSRPtr UnitGraph::CreateSortedCSR(UnitGraph::CSRPtr csrptr, int64_t num_tag, IdArray tag) {
-  const auto &csr = csrptr->GetCSRMatrix(0);
-  const auto &indptr = csr.indptr;
-  const auto &indices = csr.indices;
-  const auto &edge_id = csr.data;
-  int64_t num_edges = indices->shape[0];
-  NDArray ret_indices = NDArray::Empty({num_edges}, csr.indices->dtype, csr.indices->ctx);
-  NDArray ret_edge_id = NDArray::Empty({num_edges}, csr.indices->dtype, csr.indices->ctx);
-  int64_t *indices_ptr = static_cast<int64_t *>(ret_indices->data);
-  int64_t *edge_id_ptr = static_cast<int64_t *>(ret_edge_id->data);
-  std::cerr << "create new csr tag_num " << num_tag << std::endl;
-  for (dgl_id_t src = 0 ; src < indptr->shape[0] - 1 ; ++src) {
-    std::vector<std::vector<int64_t>> dst_arr(num_tag);
-    std::vector<std::vector<int64_t>> edge_id_arr(num_tag);
-    std::cerr << "start " << src << std::endl;
-    for (dgl_id_t edgeptr = aten::IndexSelect<dgl_id_t>(indptr, src);
-         edgeptr <  aten::IndexSelect<dgl_id_t>(indptr, src + 1);
-         ++edgeptr) {
-      int64_t dst = aten::IndexSelect<int64_t>(indices, edgeptr);
-      std::cerr << "\tedge " << edgeptr  << " " << dst << std::endl;
-      int64_t eid = aten::IndexSelect<int64_t>(edge_id, edgeptr);
-      int64_t t = aten::IndexSelect<int64_t>(tag, dst);
-      dst_arr[t].push_back(dst);
-      edge_id_arr[t].push_back(eid);
-    }
-    for (int64_t t = 0 ; t < num_tag ; ++t) {
-      std::cerr << "\tbefore copy " << t << std::endl;
-      std::copy(dst_arr[t].begin(), dst_arr[t].end(), indices_ptr);
-      std::copy(edge_id_arr[t].begin(), edge_id_arr[t].end(), edge_id_ptr);
-      indices_ptr += dst_arr[t].size();
-      edge_id_ptr += edge_id_arr[t].size();
-      std::cerr << "\tafter copy " << t << std::endl;
-    }
-  }
-  std::cerr << "before create" << std::endl;
-  return std::make_shared<CSR>(meta_graph(), csr.num_rows, csr.num_cols, indptr, ret_indices, ret_edge_id);
+IdArray UnitGraph::SortCSR_(IdArray tag, int64_t num_tags) {
+  return GetOutCSR()->SortCSR_(tag, num_tags);
 }
 
-void UnitGraph::SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) {
-  if (NumVertexTypes() == 1) {
-    std::cerr << "unit graph sort call" << std::endl;
-    in_csr_ = CreateSortedCSR(GetInCSR(), num_tag[0], tag[0]);
-    std::cerr << "new in csr returned" << std::endl;
-    out_csr_ = CreateSortedCSR(GetOutCSR(), num_tag[0], tag[0]);
-    std::cerr << "new out csr returned" << std::endl;
-  } else {
-    in_csr_ = CreateSortedCSR(GetInCSR(), num_tag[0], tag[0]);
-    out_csr_ = CreateSortedCSR(GetOutCSR(), num_tag[1], tag[1]);
-  }
+IdArray UnitGraph::SortCSC_(IdArray tag, int64_t num_tags) {
+  return GetInCSR()->SortCSC_(tag, num_tags);
 }
+
 
 }  // namespace dgl

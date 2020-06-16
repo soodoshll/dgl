@@ -376,20 +376,6 @@ DGL_REGISTER_GLOBAL("heterograph_index._CAPI_DGLHeteroEdgeSubgraph")
     *rv = HeteroSubgraphRef(subg);
   });
 
-DGL_REGISTER_GLOBAL("heterograph_index._CAPI_DGLHeteroSortByTag")
-.set_body([] (DGLArgs args, DGLRetValue* rv) {
-    HeteroGraphRef hg = args[0];
-    List<Value> num_tag = args[1];
-    List<Value> tag = args[2];
-    std::vector<int64_t> num_tag_vec;
-    std::vector<IdArray> tag_vec;
-    for (Value val : num_tag)
-      num_tag_vec.push_back(val->data);
-    for (Value val : tag)
-      tag_vec.push_back(val->data);
-    hg->SortByTag(num_tag_vec, tag_vec);
-  });
-
 ///////////////////////// HeteroSubgraph members /////////////////////////
 
 DGL_REGISTER_GLOBAL("heterograph_index._CAPI_DGLHeteroSubgraphGetGraph")
@@ -544,5 +530,22 @@ DGL_REGISTER_GLOBAL("transform._CAPI_DGLAsImmutableGraph")
     HeteroGraphRef hg = args[0];
     *rv = GraphRef(hg->AsImmutableGraph());
   });
+
+DGL_REGISTER_GLOBAL("transform._CAPI_DGLHeteroSortCSR_")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    HeteroGraphRef hg = args[0];
+    NDArray tag = args[1];
+    int64_t num_tag = args[2];
+    *rv = hg->SortCSR_(tag, num_tag);
+  });
+
+DGL_REGISTER_GLOBAL("transform._CAPI_DGLHeteroSortCSC_")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    HeteroGraphRef hg = args[0];
+    NDArray tag = args[1];
+    int64_t num_tag = args[2];
+    *rv = hg->SortCSC_(tag, num_tag);
+  });
+
 
 }  // namespace dgl

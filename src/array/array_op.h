@@ -113,6 +113,9 @@ CSRMatrix CSRSliceMatrix(CSRMatrix csr, runtime::NDArray rows, runtime::NDArray 
 template <DLDeviceType XPU, typename IdType>
 void CSRSort_(CSRMatrix* csr);
 
+template <DLDeviceType XPU, typename IdType, typename DType>
+IdArray CSRSortByTag_(CSRMatrix* csr, IdArray tag_array, int64_t num_tags);
+
 template <DLDeviceType XPU, typename IdType>
 CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries);
 
@@ -130,6 +133,10 @@ template <DLDeviceType XPU, typename IdType, typename DType>
 COOMatrix CSRRowWiseTopk(
     CSRMatrix mat, IdArray rows, int64_t k, NDArray weight, bool ascending);
 
+template <DLDeviceType XPU, typename IdType, typename FloatType>
+COOMatrix CSRRowWiseBiasedSampling(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, IdArray split, FloatArray bias, bool replace);
+    
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 template <DLDeviceType XPU, typename IdType>

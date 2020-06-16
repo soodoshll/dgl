@@ -434,6 +434,16 @@ void CSRSort_(CSRMatrix* csr) {
   });
 }
 
+IdArray CSRSortByTag_(CSRMatrix* csr, IdArray tag, int64_t num_tags) {
+  IdArray ret;
+  ATEN_CSR_SWITCH(*csr, XPU, IdType, {
+    ATEN_ID_TYPE_SWITCH(tag->dtype, DType, {
+      ret = impl::CSRSortByTag_<XPU, IdType, DType>(csr, tag, num_tags);
+    });
+  });  
+  return ret;
+}
+
 CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries) {
   CSRMatrix ret;
   ATEN_CSR_SWITCH(csr, XPU, IdType, {
@@ -465,6 +475,18 @@ COOMatrix CSRRowWiseTopk(
     ATEN_DTYPE_SWITCH(weight->dtype, DType, "weight", {
       ret = impl::CSRRowWiseTopk<XPU, IdType, DType>(
           mat, rows, k, weight, ascending);
+    });
+  });
+  return ret;
+}
+
+COOMatrix CSRRowWiseBiasedSampling(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, IdArray split, FloatArray bias, bool replace) {
+  COOMatrix ret;
+  ATEN_CSR_SWITCH(mat, XPU, IdType, {
+    ATEN_FLOAT_TYPE_SWITCH(bias->dtype, FloatType, "weight", {
+      ret = impl::CSRRowWiseBiasedSampling<XPU, IdType, FloatType>(
+          mat, rows, num_samples, split, bias, replace);
     });
   });
   return ret;

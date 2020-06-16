@@ -123,6 +123,8 @@ template COOMatrix COORowWiseSamplingUniform<kDLCPU, int32_t>(
 template COOMatrix COORowWiseSamplingUniform<kDLCPU, int64_t>(
     COOMatrix, IdArray, int64_t, bool);
 
+/////////////////////////////// Biased ///////////////////////////////
+
 }  // namespace impl
 }  // namespace aten
 }  // namespace dgl

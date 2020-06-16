@@ -409,21 +409,4 @@ GraphPtr HeteroGraph::AsImmutableGraph() const {
   return unit_graph->AsImmutableGraph();
 }
 
-void HeteroGraph::SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) {
-  for (dgl_type_t etype = 0 ; etype < NumEdgeTypes() ; ++etype) {
-    auto meta_edge = meta_graph()->FindEdge(etype);
-    auto src_type = meta_edge.first;
-    auto dst_type = meta_edge.second;
-    if (src_type == dst_type) {
-    std::cerr << "here1" << std::endl;
-      relation_graphs_[etype]->SortByTag({num_tag[src_type]}, {tag[src_type]});
-    } else {
-    std::cerr << "here2" << std::endl;
-      relation_graphs_[etype]->SortByTag({num_tag[src_type], num_tag[dst_type]},
-                                         {tag[src_type], tag[dst_type]});
-    }
-  }
-}
-
-
 }  // namespace dgl

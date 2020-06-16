@@ -88,7 +88,7 @@ void _TestCSRSampling(bool has_data) {
       std::vector<FloatType>({.5, .5, .5, .5, .5}));
   IdArray rows = NDArray::FromVector(std::vector<Idx>({0, 3}));
   for (int k = 0; k < 10; ++k) {
-    auto rst = CSRRowWiseSampling(mat, rows, 2, prob, true);
+    auto rst = (mat, rows, 2, prob, true);
     CheckSampledResult<Idx>(rst, rows, has_data);
   }
   for (int k = 0; k < 10; ++k) {

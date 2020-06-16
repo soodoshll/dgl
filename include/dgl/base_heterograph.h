@@ -465,7 +465,9 @@ class BaseHeteroGraph : public runtime::Object {
     return nullptr;
   }
 
-  virtual void SortByTag(const std::vector<int64_t> num_tag, const std::vector<IdArray>& tag) = 0;
+  virtual IdArray SortCSR_(IdArray tag, int64_t num_tags) = 0;
+
+  virtual IdArray SortCSC_(IdArray tag, int64_t num_tags) = 0;
 
   static constexpr const char* _type_key = "graph.HeteroGraph";
   DGL_DECLARE_OBJECT_TYPE_INFO(BaseHeteroGraph, runtime::Object);

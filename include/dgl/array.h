@@ -589,6 +589,30 @@ bool CSRHasDuplicate(CSRMatrix csr);
  */
 void CSRSort_(CSRMatrix* csr);
 
+/*！
+ * \brief Sort the colunm index according to an IdArray called tag
+ * 
+ * \return the split positions of different tags
+ * 
+ * Example:
+ * indptr  = [0, 5]
+ * indices = [0, 1, 2, 3, 4]
+ * tag     = [1, 1, 0, 2, 0]
+ * 
+ *  After CSRSortByTag_
+ * 
+ * indptr  = [0, 5]
+ * indices = [2, 4, 0, 1, 3]
+ * (tag)   = [0, 0, 1, 1, 2]
+ *           ^    ^     ^  ^
+ * (the tag array itself is unchanged.)
+ *   
+ * Return:
+ * [0, 2, 4, 5] (marked with ^)
+ * 
+ */
+IdArray CSRSortByTag_(CSRMatrix* csr, IdArray tag_array, int64_t num_tags);
+
 /*!
  * \brief Remove entries from CSR matrix by entry indices (data indices)
  * \return A new CSR matrix as well as a mapping from the new CSR entries to the old CSR
@@ -680,6 +704,15 @@ COOMatrix CSRRowWiseTopk(
     int64_t k,
     FloatArray weight,
     bool ascending = false);
+
+/* TODO: comment */
+COOMatrix CSRRowWiseBiasedSampling(
+    CSRMatrix mat,
+    IdArray rows,
+    int64_t num_samples,
+    IdArray split,
+    FloatArray bias,
+    bool replace = false);
 
 ///////////////////////// COO routines //////////////////////////
 

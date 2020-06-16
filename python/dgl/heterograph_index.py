@@ -990,11 +990,6 @@ class HeteroGraphIndex(ObjectBase):
         """
         return _CAPI_DGLHeteroGetFormatGraph(self, restrict_format)
 
-    def sort_by_tag(self, num_tags, tag):
-        tag = [F.zerocopy_to_dgl_ndarray(t) for t in tag]
-        print(type(num_tags[0]), type(tag[0]))
-        _CAPI_DGLHeteroSortByTag(self, num_tags, tag)
-
 @register_object('graph.HeteroSubgraph')
 class HeteroSubgraphIndex(ObjectBase):
     """Hetero-subgraph data structure"""
