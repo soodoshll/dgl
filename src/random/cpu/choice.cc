@@ -95,4 +95,45 @@ template void RandomEngine::UniformChoice<int32_t>(
 template void RandomEngine::UniformChoice<int64_t>(
     int64_t num, int64_t population, int64_t* out, bool replace);
 
+template <typename IdxType, typename FloatType>
+IdArray RandomEngine::BiasedChoice(IdxType num, IdArray split, FloatArray bias, IdxType* out, bool replace) {
+  // get probability of each tag
+  int64_t num_tags = bias->shape[0];
+  std::vector<FloatType> prob(num_tags);
+  FloatType *bias_data = static_cast<FloatType *>(bias->data);
+  int64_t *split_data = static_cast<int64_t *>(split->data);
+  int64_t total_node_num = 0;
+  for (int64_t tag = 0 ; tag < num_tags; ++tag) {
+    int64_t tag_num_nodes = split_data[tag+1] - split_data[tag];
+    total_node_num += tag_num_nodes;
+    FloatType tag_bias = bias_data[tag];
+    prob[tag] = tag_num_nodes * tag_bias;
+    // std::cerr << tag << " " << tag_bias << " "  << tag_num_nodes << " " << prob[tag] << std::endl;
+  }
+
+  auto tree = utils::TreeSampler<IdxType, FloatType, false>(this, NDArray::FromVector(prob));
+  assert(total_node_num >= num);
+  // we use hash set here. Maybe in the future we should support reservoir algorithm
+  std::vector<std::unordered_set<IdxType>> selected(num_tags);
+  for (int64_t i = 0 ; i < num ; ++i) {
+    // first choose a tag
+    IdxType tag = tree.Draw(&bias); 
+    // then choose a node
+    bool inserted = false;
+    int64_t tag_num_nodes = split_data[tag+1] - split_data[tag];
+    IdxType selected_node;
+    while (!inserted) {
+      CHECK_LT(selected[tag].size(), tag_num_nodes) << "To few nodes to be sampled";
+      selected_node = RandInt(tag_num_nodes);
+      inserted = selected[tag].insert(selected_node).second;
+    }
+    out[i] = selected_node + split_data[tag];
+  }
+}
+
+template IdArray RandomEngine::BiasedChoice<int32_t, float>(int32_t, IdArray, FloatArray, int32_t*, bool );
+template IdArray RandomEngine::BiasedChoice<int32_t, double>(int32_t, IdArray, FloatArray, int32_t*, bool );
+template IdArray RandomEngine::BiasedChoice<int64_t, float>(int64_t, IdArray, FloatArray, int64_t*, bool );
+template IdArray RandomEngine::BiasedChoice<int64_t, double>(int64_t, IdArray, FloatArray, int64_t*, bool );
+
 };  // namespace dgl

@@ -484,7 +484,8 @@ COOMatrix CSRRowWiseBiasedSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, IdArray split, FloatArray bias, bool replace) {
   COOMatrix ret;
   ATEN_CSR_SWITCH(mat, XPU, IdType, {
-    ATEN_FLOAT_TYPE_SWITCH(bias->dtype, FloatType, "weight", {
+    std::cerr << "length: " << split->shape[0] << " " << bias->shape[0] << std::endl;
+    ATEN_FLOAT_TYPE_SWITCH(bias->dtype, FloatType, "bias", {
       ret = impl::CSRRowWiseBiasedSampling<XPU, IdType, FloatType>(
           mat, rows, num_samples, split, bias, replace);
     });

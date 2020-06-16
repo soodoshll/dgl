@@ -178,6 +178,9 @@ class RandomEngine {
     return ret;
   }
 
+  template <typename IdxType, typename FloatType>
+  IdArray BiasedChoice(IdxType num, IdArray split, FloatArray bias, IdxType* out, bool replace = true); 
+
  private:
   std::default_random_engine rng_;
 };

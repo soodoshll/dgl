@@ -168,6 +168,41 @@ HeteroSubgraph SampleNeighborsTopk(
   return ret;
 }
 
+HeteroSubgraph SampleNeighborsBiased(
+    const HeteroGraphPtr hg,
+    IdArray nodes,
+    int64_t fanout,
+    EdgeDir dir,
+    IdArray split,
+    FloatArray bias,
+    bool replace) {
+  // a fast implementation
+  COOMatrix sampled_coo;
+  std::vector<HeteroGraphPtr> subrels;
+  std::vector<IdArray> induced_edges;
+  if (dir == EdgeDir::kIn) {
+    auto csc = hg->GetCSRMatrix(0);
+    sampled_coo = aten::CSRRowWiseBiasedSampling(csc, nodes, fanout, split, bias, replace);
+    sampled_coo = aten::COOTranspose(sampled_coo);
+    subrels.push_back(UnitGraph::CreateFromCOO(
+        hg->GetRelationGraph(0)->NumVertexTypes(), sampled_coo.num_rows, sampled_coo.num_cols,
+        sampled_coo.row, sampled_coo.col));
+    induced_edges.push_back(sampled_coo.data);
+  } else {
+    auto csr = hg->GetCSRMatrix(0);
+    sampled_coo = aten::CSRRowWiseBiasedSampling(csr, nodes, fanout, split, bias, replace);
+    subrels.push_back(UnitGraph::CreateFromCOO(
+        hg->GetRelationGraph(0)->NumVertexTypes(), sampled_coo.num_rows, sampled_coo.num_cols,
+        sampled_coo.row, sampled_coo.col));
+    induced_edges.push_back(sampled_coo.data);
+  }
+  HeteroSubgraph ret;
+  ret.graph = CreateHeteroGraph(hg->meta_graph(), subrels, hg->NumVerticesPerType());
+  ret.induced_vertices.resize(hg->NumVertexTypes());
+  ret.induced_edges = std::move(induced_edges);
+  return ret;
+}
+
 DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
 .set_body([] (DGLArgs args, DGLRetValue *rv) {
     HeteroGraphRef hg = args[0];
@@ -208,6 +243,27 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighborsTopk")
         hg.sptr(), nodes, k, dir, weight, ascending);
 
     *rv = HeteroGraphRef(subg);
+  });
+
+DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighborsBiased")
+.set_body([] (DGLArgs args, DGLRetValue *rv) {
+    HeteroGraphRef hg = args[0];
+    IdArray nodes = args[1];
+    int64_t fanout = args[2];
+    const std::string dir_str = args[3];
+    IdArray split = args[4];
+    FloatArray bias = args[5];
+    const bool replace = args[6];
+
+    CHECK(dir_str == "in" || dir_str == "out")
+      << "Invalid edge direction. Must be \"in\" or \"out\".";
+    EdgeDir dir = (dir_str == "in")? EdgeDir::kIn : EdgeDir::kOut;
+
+    std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
+    *subg = sampling::SampleNeighborsBiased(
+        hg.sptr(), nodes, fanout, dir, split, bias, replace);
+
+    *rv = HeteroSubgraphRef(subg);
   });
 
 }  // namespace sampling

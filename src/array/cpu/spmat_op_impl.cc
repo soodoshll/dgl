@@ -610,16 +610,16 @@ IdArray CSRSortByTag_(CSRMatrix* csr, IdArray tag, int64_t num_tags) {
 
   // #pragma omp parallel for 
   for (int64_t src = 0 ; src < num_rows ; ++src) {
-    int64_t start = *(indptr_data + src);
-    int64_t end = *(indptr_data + src + 1);
+    int64_t start = indptr_data[src];
+    int64_t end = indptr_data[src + 1];
 
     std::vector<std::vector<int64_t>> dst_arr(num_tags);
     std::vector<std::vector<IdType>> eid_arr(num_tags);
 
     for (int64_t ptr = start ; ptr < end ; ++ptr) {
-      int64_t dst = *(indices_data + ptr);
-      IdType eid = *(eid_data + ptr);
-      DType t = *(tag_data + dst);
+      int64_t dst = indices_data[ptr];
+      IdType eid = eid_data[ptr];
+      DType t = tag_data[dst];
       dst_arr[t].push_back(dst);
       eid_arr[t].push_back(eid);
     }
@@ -628,14 +628,14 @@ IdArray CSRSortByTag_(CSRMatrix* csr, IdArray tag, int64_t num_tags) {
     IdType *eid_ptr = eid_data + start;
     int64_t split_ptr = 0;
     for (int64_t t = 0 ; t < num_tags ; ++t) {
-      *(split_data + src * (num_tags + 1) + t) = split_ptr;
+      split_data[src * (num_tags + 1) + t] = split_ptr;
       std::copy(dst_arr[t].begin(), dst_arr[t].end(), indices_ptr);
       std::copy(eid_arr[t].begin(), eid_arr[t].end(), eid_ptr);
       indices_ptr += dst_arr[t].size();
       eid_ptr += eid_arr[t].size();
       split_ptr += dst_arr[t].size();
     }
-    *(split_data + src * (num_tags + 1) + num_tags) = split_ptr;
+    split_data[src * (num_tags + 1) + num_tags] = split_ptr;
   }
 
   return split;

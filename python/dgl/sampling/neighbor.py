@@ -9,7 +9,8 @@ from .. import utils
 
 __all__ = [
     'sample_neighbors',
-    'select_topk']
+    'select_topk',
+    'sample_neighbors_biased']
 
 def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False):
     """Sample from the neighbors of the given nodes and return the induced subgraph.
@@ -160,6 +161,17 @@ def select_topk(g, k, weight, nodes=None, edge_dir='in', ascending=False):
 
     subgidx = _CAPI_DGLSampleNeighborsTopk(
         g._graph, nodes_all_types, k_array, edge_dir, weight_arrays, bool(ascending))
+    induced_edges = subgidx.induced_edges
+    ret = DGLHeteroGraph(subgidx.graph, g.ntypes, g.etypes)
+    for i, etype in enumerate(ret.canonical_etypes):
+        ret.edges[etype].data[EID] = induced_edges[i].tousertensor()
+    return ret
+
+def sample_neighbors_biased(g, nodes, fanout, split, bias, edge_dir='in', replace=False):
+    nodes = utils.toindex(nodes).todgltensor()
+    split = F.zerocopy_to_dgl_ndarray(split)
+    bias = F.zerocopy_to_dgl_ndarray(bias)
+    subgidx = _CAPI_DGLSampleNeighborsBiased(g._graph, nodes, fanout, edge_dir, split, bias, replace)
     induced_edges = subgidx.induced_edges
     ret = DGLHeteroGraph(subgidx.graph, g.ntypes, g.etypes)
     for i, etype in enumerate(ret.canonical_etypes):

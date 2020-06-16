@@ -5,6 +5,8 @@
  */
 #include <dgl/random.h>
 #include <numeric>
+#include <unordered_set>
+
 #include "./rowwise_pick.h"
 
 namespace dgl {
@@ -125,6 +127,38 @@ template COOMatrix COORowWiseSamplingUniform<kDLCPU, int64_t>(
 
 /////////////////////////////// Biased ///////////////////////////////
 
+template <typename IdxType, typename FloatType>
+inline PickFn<IdxType> GetBiasedSamplingPickFn(
+    int64_t num_samples, IdArray split, FloatArray bias, bool replace) {
+  PickFn<IdxType> pick_fn = [num_samples, split, bias, replace]
+    (IdxType rowid, IdxType off, IdxType len,
+     const IdxType* col, const IdxType* data,
+     IdxType* out_idx) {
+    RandomEngine::ThreadLocal()->BiasedChoice<IdxType, FloatType>(
+            num_samples, split, bias, out_idx, replace);
+    };
+  return pick_fn;
+}
+
+template <DLDeviceType XPU, typename IdxType, typename FloatType>
+COOMatrix CSRRowWiseBiasedSampling(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, IdArray split, FloatArray bias, bool replace) {
+  if (replace) {
+    // normal biased sampling
+  } else {
+    auto pick_fn = GetBiasedSamplingPickFn<IdxType, FloatType>(num_samples, split, bias, replace);
+    return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn);
+  }
+}
+
+template COOMatrix CSRRowWiseBiasedSampling<kDLCPU, int32_t, float>(
+    CSRMatrix, IdArray, int64_t, IdArray, FloatArray, bool);
+template COOMatrix CSRRowWiseBiasedSampling<kDLCPU, int32_t, double>(
+    CSRMatrix, IdArray, int64_t, IdArray, FloatArray, bool);
+template COOMatrix CSRRowWiseBiasedSampling<kDLCPU, int64_t, float>(
+    CSRMatrix, IdArray, int64_t, IdArray, FloatArray, bool);
+template COOMatrix CSRRowWiseBiasedSampling<kDLCPU, int64_t, double>(
+    CSRMatrix, IdArray, int64_t, IdArray, FloatArray, bool);
 }  // namespace impl
 }  // namespace aten
 }  // namespace dgl

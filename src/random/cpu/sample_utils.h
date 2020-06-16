@@ -279,7 +279,8 @@ class TreeSampler: public BaseSampler<Idx> {
     ResetState(prob);
   }
 
-  Idx Draw() {
+  Idx Draw(FloatArray *decrease=nullptr) {
+    DType *decrease_data = decrease ? static_cast<DType *>((*decrease)->data) : nullptr;
     int64_t cur = 1;
     DType p = re->Uniform<DType>(0, weight[cur]);
     DType accum = 0.;
@@ -296,7 +297,7 @@ class TreeSampler: public BaseSampler<Idx> {
     if (!replace) {
       while (cur >= 1) {
         if (cur >= num_leafs)
-          weight[cur] = 0.;
+          weight[cur] = decrease ? weight[cur] - decrease_data[rst] : 0.;
         else
           weight[cur] = weight[cur * 2] + weight[cur * 2 + 1];
         cur /= 2;
