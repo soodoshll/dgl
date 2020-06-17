@@ -114,27 +114,14 @@ void RandomEngine::BiasedChoice(IdxType num, IdxType rowid, IdArray split, Float
     prob_data[tag] = tag_num_nodes * tag_bias;
   }
   utils::TreeSampler<IdxType, FloatType, false> tree(this, prob);
-  CHECK_GE(total_node_num, num);
+  // CHECK_GE(total_node_num, num);
   // we use hash set here. Maybe in the future we should support reservoir algorithm
-  // So slow
   std::vector<std::unordered_set<IdxType>> selected(num_tags);
   for (int64_t i = 0 ; i < num ; ++i) {
-    // first choose a tag
-    // start = std::chrono::steady_clock::now();
     IdxType tag = tree.DrawAndUpdate(bias); 
-    // IdxType tag = RandInt(num_tags);
-    // tag = 0;
-    // end = std::chrono::steady_clock::now();
-    // elapsed_seconds = std::chrono::duration<double>(end-start);
-    // t_sample += elapsed_seconds.count();
-    // cnt_sample += 1;
-    // if (cnt_sample % 10000 == 0 )
-      // std::cerr << "time spent on sampling type " << t_sample << std::endl; 
-    // IdxType tag = 0; //for profiling 
     // then choose a node
     bool inserted = false;
     int64_t tag_num_nodes = split_data[tag+1] - split_data[tag];
-    // int64_t tag_num_nodes = total_node_num;
     // std::cerr << "choose tag " << tag << " " << tag_num_nodes << std::endl;
     IdxType selected_node;
     while (!inserted) {

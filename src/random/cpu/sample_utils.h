@@ -260,7 +260,7 @@ class TreeSampler: public BaseSampler<Idx> {
   int64_t num_leafs;
 
  public:
-  void ResetState(FloatArray prob) {
+  void ResetState(const FloatArray &prob) {
     int64_t prob_size = prob->shape[0];
     const DType *prob_data = static_cast<DType *>(prob->data);
     std::fill(weight.begin(), weight.end(), 0);
@@ -270,7 +270,7 @@ class TreeSampler: public BaseSampler<Idx> {
       weight[i] = weight[i * 2] + weight[i * 2 + 1];
   }
 
-  explicit TreeSampler(RandomEngine *re, FloatArray prob): re(re) {
+  explicit TreeSampler(RandomEngine *re, const FloatArray &prob): re(re) {
     num_leafs = 1;
     while (num_leafs < prob->shape[0])
       num_leafs *= 2;
@@ -305,7 +305,8 @@ class TreeSampler: public BaseSampler<Idx> {
     return rst;
   }
 
-  Idx DrawAndUpdate(FloatArray decrease) {
+  // Idx DrawAndUpdate(FloatArray decrease) {
+  Idx DrawAndUpdate(const FloatArray &decrease) {
     DType *decrease_data = static_cast<DType *>(decrease->data);
     int64_t cur = 1;
     DType p = re->Uniform<DType>(0, weight[cur]);
