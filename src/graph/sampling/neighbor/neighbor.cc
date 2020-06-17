@@ -181,7 +181,7 @@ HeteroSubgraph SampleNeighborsBiased(
   std::vector<HeteroGraphPtr> subrels;
   std::vector<IdArray> induced_edges;
   if (dir == EdgeDir::kIn) {
-    auto csc = hg->GetCSRMatrix(0);
+    auto csc = hg->GetCSCMatrix(0);
     sampled_coo = aten::CSRRowWiseBiasedSampling(csc, nodes, fanout, split, bias, replace);
     sampled_coo = aten::COOTranspose(sampled_coo);
     subrels.push_back(UnitGraph::CreateFromCOO(

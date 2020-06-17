@@ -1197,6 +1197,7 @@ def sort_csr_(hg, tag=None):
     num_tags = int(F.max(tag_data, 0)) + 1
     ret = _CAPI_DGLHeteroSortCSR_(hg._graph.get_relation_graph(0), F.zerocopy_to_dgl_ndarray(tag_data), num_tags)
     return F.reshape(F.zerocopy_from_dgl_ndarray(ret), [-1, num_tags + 1])
+    # return F.zerocopy_from_dgl_ndarray(ret)
 
 def sort_csc_(hg, tag=None):
     # Currently only support Unitgraph
@@ -1204,6 +1205,7 @@ def sort_csc_(hg, tag=None):
     num_tags = int(F.max(tag_data, 0)) + 1
     ret = _CAPI_DGLHeteroSortCSC_(hg._graph.get_relation_graph(0), F.zerocopy_to_dgl_ndarray(tag_data), num_tags)
     return F.reshape(F.zerocopy_from_dgl_ndarray(ret), [-1, num_tags + 1])
+    # return F.zerocopy_from_dgl_ndarray(ret)
 
 # def sort_csc(hg, tag=None):
 

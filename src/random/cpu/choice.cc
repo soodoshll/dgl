@@ -63,7 +63,7 @@ void RandomEngine::UniformChoice(IdxType num, IdxType population, IdxType* out, 
     for (IdxType i = 0; i < num; ++i)
       out[i] = RandInt(population);
   } else {
-    if (num < population / 10) {  // TODO(minjie): may need a better threshold here
+    // if (num < population / 10) {  // TODO(minjie): may need a better threshold here
       // use hash set
       // In the best scenario, time complexity is O(num), i.e., no conflict.
       //
@@ -76,17 +76,17 @@ void RandomEngine::UniformChoice(IdxType num, IdxType population, IdxType* out, 
         selected.insert(RandInt(population));
       }
       std::copy(selected.begin(), selected.end(), out);
-    } else {
-      // reservoir algorithm
-      // time: O(population), space: O(num)
-      for (IdxType i = 0; i < num; ++i)
-        out[i] = i;
-      for (IdxType i = num; i < population; ++i) {
-        const IdxType j = RandInt(i);
-        if (j < num)
-          out[j] = i;
-      }
-    }
+    // } else {
+    //   // reservoir algorithm
+    //   // time: O(population), space: O(num)
+    //   for (IdxType i = 0; i < num; ++i)
+    //     out[i] = i;
+    //   for (IdxType i = num; i < population; ++i) {
+    //     const IdxType j = RandInt(i);
+    //     if (j < num)
+    //       out[j] = i;
+    //   }
+    // }
   }
 }
 
@@ -96,44 +96,61 @@ template void RandomEngine::UniformChoice<int64_t>(
     int64_t num, int64_t population, int64_t* out, bool replace);
 
 template <typename IdxType, typename FloatType>
-IdArray RandomEngine::BiasedChoice(IdxType num, IdArray split, FloatArray bias, IdxType* out, bool replace) {
+void RandomEngine::BiasedChoice(IdxType num, IdxType rowid, IdArray split, FloatArray bias, IdxType* out, bool replace) {
+  // static double build_tree = 0;
+  // static int tree_cnt = 0;
   // get probability of each tag
   int64_t num_tags = bias->shape[0];
-  std::vector<FloatType> prob(num_tags);
+  // std::vector<FloatType> prob(num_tags);
   FloatType *bias_data = static_cast<FloatType *>(bias->data);
-  int64_t *split_data = static_cast<int64_t *>(split->data);
+  int64_t *split_data = static_cast<int64_t *>(split->data) + rowid * (num_tags + 1);
   int64_t total_node_num = 0;
+  FloatArray prob = NDArray::Empty({num_tags}, bias->dtype, bias->ctx);
+  FloatType *prob_data = static_cast<FloatType *>(prob->data);
   for (int64_t tag = 0 ; tag < num_tags; ++tag) {
     int64_t tag_num_nodes = split_data[tag+1] - split_data[tag];
     total_node_num += tag_num_nodes;
     FloatType tag_bias = bias_data[tag];
-    prob[tag] = tag_num_nodes * tag_bias;
-    // std::cerr << tag << " " << tag_bias << " "  << tag_num_nodes << " " << prob[tag] << std::endl;
+    prob_data[tag] = tag_num_nodes * tag_bias;
   }
-
-  auto tree = utils::TreeSampler<IdxType, FloatType, false>(this, NDArray::FromVector(prob));
-  assert(total_node_num >= num);
+  utils::TreeSampler<IdxType, FloatType, false> tree(this, prob);
+  CHECK_GE(total_node_num, num);
   // we use hash set here. Maybe in the future we should support reservoir algorithm
+  // So slow
   std::vector<std::unordered_set<IdxType>> selected(num_tags);
   for (int64_t i = 0 ; i < num ; ++i) {
     // first choose a tag
-    IdxType tag = tree.Draw(&bias); 
+    // start = std::chrono::steady_clock::now();
+    IdxType tag = tree.DrawAndUpdate(bias); 
+    // IdxType tag = RandInt(num_tags);
+    // tag = 0;
+    // end = std::chrono::steady_clock::now();
+    // elapsed_seconds = std::chrono::duration<double>(end-start);
+    // t_sample += elapsed_seconds.count();
+    // cnt_sample += 1;
+    // if (cnt_sample % 10000 == 0 )
+      // std::cerr << "time spent on sampling type " << t_sample << std::endl; 
+    // IdxType tag = 0; //for profiling 
     // then choose a node
     bool inserted = false;
     int64_t tag_num_nodes = split_data[tag+1] - split_data[tag];
+    // int64_t tag_num_nodes = total_node_num;
+    // std::cerr << "choose tag " << tag << " " << tag_num_nodes << std::endl;
     IdxType selected_node;
     while (!inserted) {
-      CHECK_LT(selected[tag].size(), tag_num_nodes) << "To few nodes to be sampled";
+      CHECK_LT(selected[tag].size(), tag_num_nodes);
       selected_node = RandInt(tag_num_nodes);
       inserted = selected[tag].insert(selected_node).second;
     }
     out[i] = selected_node + split_data[tag];
+    // out[i] = selected_node;
   }
+  // std::cerr << "choice finish" << std::endl;
 }
 
-template IdArray RandomEngine::BiasedChoice<int32_t, float>(int32_t, IdArray, FloatArray, int32_t*, bool );
-template IdArray RandomEngine::BiasedChoice<int32_t, double>(int32_t, IdArray, FloatArray, int32_t*, bool );
-template IdArray RandomEngine::BiasedChoice<int64_t, float>(int64_t, IdArray, FloatArray, int64_t*, bool );
-template IdArray RandomEngine::BiasedChoice<int64_t, double>(int64_t, IdArray, FloatArray, int64_t*, bool );
+template void RandomEngine::BiasedChoice<int32_t, float>(int32_t, int32_t, IdArray, FloatArray, int32_t*, bool );
+template void RandomEngine::BiasedChoice<int32_t, double>(int32_t, int32_t, IdArray, FloatArray, int32_t*, bool );
+template void RandomEngine::BiasedChoice<int64_t, float>(int64_t, int64_t, IdArray, FloatArray, int64_t*, bool );
+template void RandomEngine::BiasedChoice<int64_t, double>(int64_t, int64_t, IdArray, FloatArray, int64_t*, bool );
 
 };  // namespace dgl

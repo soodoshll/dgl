@@ -135,8 +135,11 @@ inline PickFn<IdxType> GetBiasedSamplingPickFn(
      const IdxType* col, const IdxType* data,
      IdxType* out_idx) {
     RandomEngine::ThreadLocal()->BiasedChoice<IdxType, FloatType>(
-            num_samples, split, bias, out_idx, replace);
-    };
+            num_samples, rowid, split, bias, out_idx, replace);
+    for (int64_t j = 0; j < num_samples; ++j) {
+      out_idx[j] += off;
+    }
+  };
   return pick_fn;
 }
 
@@ -145,6 +148,7 @@ COOMatrix CSRRowWiseBiasedSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, IdArray split, FloatArray bias, bool replace) {
   if (replace) {
     // normal biased sampling
+    LOG(FATAL) << "not implemented";
   } else {
     auto pick_fn = GetBiasedSamplingPickFn<IdxType, FloatType>(num_samples, split, bias, replace);
     return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn);

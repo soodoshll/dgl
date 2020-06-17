@@ -179,7 +179,7 @@ class RandomEngine {
   }
 
   template <typename IdxType, typename FloatType>
-  IdArray BiasedChoice(IdxType num, IdArray split, FloatArray bias, IdxType* out, bool replace = true); 
+  void BiasedChoice(IdxType num, IdxType rowid, IdArray split, FloatArray bias, IdxType* out, bool replace = true); 
 
  private:
   std::default_random_engine rng_;
