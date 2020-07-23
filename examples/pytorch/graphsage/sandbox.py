@@ -87,8 +87,10 @@ if __name__ == '__main__':
 
     train_mask = th.zeros([graph.number_of_nodes()])
     train_mask[train_idx] = 1
-
+    print("start partition")
+    t0 = time.time()
     part = dgl.transform.metis_partition(graph, args.num_partition, balance_ntypes=train_mask)
+    print("convert into heterograph",time.time()-t0,'s')
     graph = dgl.graph(graph.edges())
     data = graph, train_idx, valid_idx, test_idx
     # run1(args, data)
