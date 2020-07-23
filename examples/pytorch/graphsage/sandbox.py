@@ -70,7 +70,7 @@ def run1(args, data):
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("multi-gpu training sampled frequency counting")
-    argparser.add_argument('--dataset', type=str, default='reddit')
+    argparser.add_argument('--dataset', type=str, default='ogbn-products')
     argparser.add_argument('--num-epochs', type=int, default=20)
     argparser.add_argument('--num-partition', type=int, default=4)
     argparser.add_argument('--fan-out', type=str, default='10,25')
@@ -79,7 +79,7 @@ if __name__ == '__main__':
         help="Number of sampling processes. Use 0 for no extra process.")
     args = argparser.parse_args()
     
-    dataset = DglNodePropPredDataset(name = "ogbn-products")
+    dataset = DglNodePropPredDataset(name = args.dataset)
 
     split_idx = dataset.get_idx_split()
     train_idx, valid_idx, test_idx = split_idx["train"], split_idx["valid"], split_idx["test"]
