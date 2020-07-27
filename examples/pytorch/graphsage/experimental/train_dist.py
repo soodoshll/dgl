@@ -146,6 +146,10 @@ def run(args, device, data):
         # Loop over the dataloader to sample the computation dependency graph as a list of
         # blocks.
         step_time = []
+        graph_size = []
+        local_nodes = []
+        pb = g.get_partition_book()
+
         for step, blocks in enumerate(dataloader):
             tic_step = time.time()
             sample_time += tic_step - start
@@ -164,6 +168,10 @@ def run(args, device, data):
 
             num_seeds += len(blocks[-1].dstdata[dgl.NID])
             num_inputs += len(blocks[0].srcdata[dgl.NID])
+            last_layer = blocks[0].srcdata[dgl.NID]
+            graph_size.append(len(last_layer))
+            local_nodes.append(int(th.sum(pb.nid2partid(last_layer) == g.rank())))
+            print(local_nodes[-1]/graph_size[-1])
             # Compute loss and prediction
             start = time.time()
             batch_pred = model(blocks, batch_inputs)

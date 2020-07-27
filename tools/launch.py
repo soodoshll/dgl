@@ -41,6 +41,9 @@ def submit_jobs(args, udf_command):
     server_cmd = server_cmd + ' ' + 'DGL_NUM_CLIENT=' + str(args.num_client)
     server_cmd = server_cmd + ' ' + 'DGL_CONF_PATH=' + str(args.conf_path)
     server_cmd = server_cmd + ' ' + 'DGL_IP_CONFIG=' + str(args.ip_config)
+    if os.environ.get('PYTHONPATH') is not None:
+        server_cmd = server_cmd + ' ' + 'PYTHONPATH=$PYTHONPATH' + os.environ.get('PYTHONPATH')
+
     for i in range(len(hosts)*server_count_per_machine):
         ip, _ = hosts[int(i / server_count_per_machine)]
         cmd = server_cmd + ' ' + 'DGL_SERVER_ID=' + str(i)
@@ -55,7 +58,7 @@ def submit_jobs(args, udf_command):
     if os.environ.get('OMP_NUM_THREADS') is not None:
         client_cmd = client_cmd + ' ' + 'OMP_NUM_THREADS=' + os.environ.get('OMP_NUM_THREADS')
     if os.environ.get('PYTHONPATH') is not None:
-        client_cmd = client_cmd + ' ' + 'PYTHONPATH=' + os.environ.get('PYTHONPATH')
+        client_cmd = client_cmd + ' ' + 'PYTHONPATH=$PYTHONPATH' + os.environ.get('PYTHONPATH')
 
     torch_cmd = '-m torch.distributed.launch'
     torch_cmd = torch_cmd + ' ' + '--nproc_per_node=' + str(client_count_per_machine)
