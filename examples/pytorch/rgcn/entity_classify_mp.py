@@ -452,14 +452,9 @@ def load_oag(args):
     hg = dataset[0]
 
     # Construct author embeddings by averaging over their papers' embeddings.
-    hg.multi_update_all(
-        {'rev_AP_write_first': (fn.copy_src('emb', 'm'), fn.sum('m', 'h')),
-         'rev_AP_write_last': (fn.copy_src('emb', 'm'), fn.sum('m', 'h')),
-         'rev_AP_write_other': (fn.copy_src('emb', 'm'), fn.sum('m', 'h')),},
-        'sum')
-    cnts = hg.in_degrees(etype='rev_AP_write_first') + hg.in_degrees(etype='rev_AP_write_last') + hg.in_degrees(etype='rev_AP_write_other')
-    cnts = cnts.reshape(-1, 1)
-    hg.nodes['author'].data['emb'] = hg.nodes['author'].data['h'] / cnts
+    paper_author_subg = hg['paper', : , 'author']
+    paper_author_subg.update_all(fn.copy_src('emb', 'm'), fn.mean('m', 'h'))
+    hg.nodes['author'].data['emb'] = paper_author_subg.nodes['author'].data['h']
 
     # Construct node features.
     # TODO(zhengda) we need to construct the node features for author nodes.
