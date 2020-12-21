@@ -453,7 +453,8 @@ def load_oag(args):
 
     # Construct author embeddings by averaging over their papers' embeddings.
 
-    # make a copy of hg without feature dat    hg_no_feats = hg.clone()
+    # make a copy of hg without feature data
+    hg_no_feats = hg.clone()
     for ntype in hg_no_feats.ntypes:
         hg_no_feats.nodes[ntype].data.clear()
     for etype in hg_no_feats.canonical_etypes:
