@@ -453,9 +453,12 @@ def load_oag(args):
 
     # Construct author embeddings by averaging over their papers' embeddings.
 
-    # make a copy of hg without feature data
-    hg_wo_feats = type(hg)(hg._graph, hg.ntypes, hg.etypes)
-    paper_author_subg = hg_wo_feats['paper', : , 'author']
+    # make a copy of hg without feature dat    hg_no_feats = hg.clone()
+    for ntype in hg_no_feats.ntypes:
+        hg_no_feats.nodes[ntype].data.clear()
+    for etype in hg_no_feats.canonical_etypes:
+        hg_no_feats.edges[etype].data.clear()
+    paper_author_subg = hg_no_feats['paper', : , 'author']
     paper_author_subg.nodes['paper'].data['emb'] = hg.nodes['paper'].data['emb']
     paper_author_subg.update_all(fn.copy_src('emb', 'm'), fn.mean('m', 'h'))
     hg.nodes['author'].data['emb'] = paper_author_subg.nodes['author'].data['h']
